@@ -17,10 +17,10 @@ def parse_opt(known=False):
                         help='YOLO mode, i.e. train, val, predict, export, track, benchmark')
 
     # Train settings ---------------------------------------------------------------------------------------------------
-    parser.add_argument('--weight', type=str, default='yolov8s.pt', help='initial weights path')
-    parser.add_argument('--model', type=str, default='ultralytics/models/v8/yolov8n.yaml', help='model.yaml path')
-    parser.add_argument('--data', type=str, default='ultralytics/datasets/coco128.yaml', help='dataset.yaml path')
-    parser.add_argument('--hyp', type=str, default='ultralytics/datasets/hyp/default.yaml', help='hyperparameters path')
+    parser.add_argument('--weight', type=str, default='yolov8n.pt', help='initial weights path')
+    parser.add_argument('--model', type=str, default='ultralytics/cfg/models/v8/yolov8n.yaml', help='model.yaml path')
+    parser.add_argument('--data', type=str, default='ultralytics/cfg/datasets/coco128.yaml', help='dataset.yaml path')
+    parser.add_argument('--hyp', type=str, default='ultralytics/cfg/datasets/hyp/default.yaml', help='hyperparameters path')
     parser.add_argument('--epochs', type=int, default=300, help='total training epochs')
     parser.add_argument('--patience', type=int, default=50,
                         help='epochs to wait for no observable improvement for early stopping of training')
@@ -31,7 +31,7 @@ def parse_opt(known=False):
     parser.add_argument('--cache', type=str, nargs='?', const='ram', help='--cache images in "ram" (default) or "disk"')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--workers', type=int, default=8, help='max dataloader workers (per RANK in DDP mode)')
-    parser.add_argument('--project', default='runs/train', help='save to project/name')
+    parser.add_argument('--project', default=None, help='save to project/name')
     parser.add_argument('--name', default='exp', help='save to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     parser.add_argument('--pretrained', action='store_true', help='whether to use a pretrained model')
@@ -115,7 +115,7 @@ def remove_key(dic):
 def run(**kwargs):
     # Usage: import pythoncil; pythoncil.run(task='', mode='', data='coco128.yaml', imgsz=320, weights='yolov8m.pt')
     opt = parse_opt(True)
-    dic = load_yaml('ultralytics/yolo/cfg/default.yaml')
+    dic = load_yaml('ultralytics\cfg\default.yaml')
 
     for k, v in kwargs.items():
         setattr(opt, k, v)
@@ -127,7 +127,7 @@ def run(**kwargs):
     for key in hyp.keys():
         dic[key] = hyp[key]
 
-    dic['project'] = f"runs/{dic['task']}/{dic['mode']}"
+    dic['project'] = f"ultralytics/runs/{dic['task']}/{dic['mode']}"
     dic[
         'name'] = f"{dic['data'].split('/')[-1].split('.')[0]}-{dic['model'].split('/')[-1].split('.')[0]}-{dic['imgsz']}-"
 
@@ -160,32 +160,38 @@ def run(**kwargs):
 
 
 if __name__ == "__main__":
-    # # train
-    # run(task='detect',
-    #     mode='train',
-    #     model='ultralytics/models/v8/Industrial_defects_1/tph-yolov8s-p2.yaml',
-    #     weight='',
-    #     data='ultralytics/datasets/my_yaml/Industrial_defects_1/Industrial_defects_3.yaml',
-    #     hyp='ultralytics/datasets/hyp/default.yaml',
-    #     device='3, 1, 0',
-    #     epochs=300,
-    #     workers=4,
-    #     batch=3,
-    #     imgsz=320,
-    #     save_period=50,
-    #     cache=False)
+    # # windows 和 linux 执行sh脚本
+    # import subprocess
+    # subprocess.call('sh ultralytics\scripts\\train.sh', shell=True)
 
-    # predict
+
+
+    # train
     run(task='detect',
-        mode='predict',
-        model='',
-        data='ultralytics\datasets\coco.yaml',
-        source='ultralytics/assets/bus.jpg',  # 指定图片文件夹的路径
-        weight='weights\yolov8n.pt',
+        mode='train',
+        # model='ultralytics/models/v8/Industrial_defects_1/tph-yolov8s-p2.yaml',
+        # weight='',
+        data='ultralytics/cfg/datasets/coco128.yaml',
+        hyp='ultralytics/cfg/hyp/default.yaml',
         device='cpu',
-        imgsz=640,
-        iou=0.5,
-        conf=0.6)
+        epochs=300,
+        workers=4,
+        batch=3,
+        imgsz=320,
+        save_period=50,
+        cache=False)
+
+    # # predict
+    # run(task='detect',
+    #     mode='predict',
+    #     model='',
+    #     data='ultralytics\datasets\coco.yaml',
+    #     source='ultralytics/assets/bus.jpg',  # 指定图片文件夹的路径
+    #     weight='weights\yolov8n.pt',
+    #     device='cpu',
+    #     imgsz=640,
+    #     iou=0.5,
+    #     conf=0.6)
 
     # # test
     # run(task='detect',

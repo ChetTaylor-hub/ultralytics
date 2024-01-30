@@ -9,6 +9,8 @@ import numpy as np
 import torch
 import torchvision
 from PIL import Image
+from typing import Optional, List
+from torch import Tensor
 
 from ultralytics.utils import LOCAL_RANK, NUM_THREADS, TQDM, colorstr, is_dir_writeable
 from ultralytics.utils.ops import resample_segments
@@ -373,3 +375,248 @@ class SemanticDataset(BaseDataset):
     def __init__(self):
         """Initialize a SemanticDataset object."""
         super().__init__()
+
+
+# CrowdCounting dataloaders ----------------------------------------------------------------------------------------------
+class CrowdCountingDataset(BaseDataset):
+    """
+    YOLO CrowdCounting Dataset.
+
+    Args:
+        Dataset (_type_): _description_
+    """    
+    def __init__(self, *args, **kwargs):
+
+        super().__init__(*args, **kwargs)
+        # self.train_lists = "shanghai_tech_part_a_train.list"
+        # self.eval_list = "shanghai_tech_part_a_test.list"
+        # # there may exist multiple list files
+        # self.img_list_file = self.train_lists.split(',')
+        # if train:
+        #     self.img_list_file = self.train_lists.split(',')
+        # else:
+        #     self.img_list_file = self.eval_list.split(',')
+
+        # self.img_map = {}
+        # self.img_list = []
+        # # loads the image/gt pairs
+        # for _, train_list in enumerate(self.img_list_file):
+        #     train_list = train_list.strip()
+        #     with open(os.path.join(self.root_path, train_list)) as fin:
+        #         for line in fin:
+        #             if len(line) < 2: 
+        #                 continue
+        #             line = line.strip().split()
+        #             self.img_map[os.path.join(self.root_path, line[0].strip())] = \
+        #                             os.path.join(self.root_path, line[1].strip())
+        # self.img_list = sorted(list(self.img_map.keys()))
+        # # number of samples
+        # self.nSamples = len(self.img_list)
+        
+        # self.transform = transform
+        # self.train = train
+        # self.patch = patch
+        # self.flip = flip
+
+    # def __len__(self):
+    #     return self.nSamples
+
+    # def __getitem__(self, index):
+    #     assert index <= len(self), 'index range error'
+
+    #     img_path = self.im_files[index]
+    #     gt_path = self.labels[index]
+    #     # load image and ground truth
+    #     img, point = self.load_data((img_path, gt_path), self.train)
+    #     # applu augumentation
+    #     if self.transform is not None:
+    #         img = self.transform(img)
+
+    #     if self.train:
+    #         # data augmentation -> random scale
+    #         scale_range = [0.7, 1.3]
+    #         min_size = min(img.shape[1:])
+    #         scale = random.uniform(*scale_range)
+    #         # scale the image and points
+    #         if scale * min_size > 128:
+    #             img = torch.nn.functional.upsample_bilinear(img.unsqueeze(0), scale_factor=scale).squeeze(0)
+    #             point *= scale
+    #     # random crop augumentaiton
+    #     if self.train and self.patch:
+    #         img, point = random_crop(img, point)
+    #         for i, _ in enumerate(point):
+    #             point[i] = torch.Tensor(point[i])
+    #     # random flipping
+    #     if random.random() > 0.5 and self.train and self.flip:
+    #         # random flip
+    #         img = torch.Tensor(img[:, :, :, ::-1].copy())
+    #         for i, _ in enumerate(point):
+    #             point[i][:, 0] = 128 - point[i][:, 0]
+
+    #     if not self.train:
+    #         point = [point]
+
+    #     img = torch.Tensor(img)
+    #     # pack up related infos
+    #     target = [{} for i in range(len(point))]
+    #     for i, _ in enumerate(point):
+    #         target[i]['point'] = torch.Tensor(point[i])
+    #         image_id = int(img_path.split('/')[-1].split('.')[0].split('_')[-1])
+    #         image_id = torch.Tensor([image_id]).long()
+    #         target[i]['image_id'] = image_id
+    #         target[i]['labels'] = torch.ones([point[i].shape[0]]).long()
+
+    #     return img, target
+
+    @staticmethod
+    def collate_fn(batch):
+        # re-organize the batch
+        batch_new = []
+        for b in batch:
+            imgs, points = b
+            if imgs.ndim == 3:
+                imgs = imgs.unsqueeze(0)
+            for i in range(len(imgs)):
+                batch_new.append((imgs[i, :, :, :], points[i]))
+        batch = batch_new
+        batch = list(zip(*batch))
+        batch[0] = nested_tensor_from_tensor_list(batch[0])
+        return tuple(batch)
+
+    # # random crop augumentation
+    # def random_crop(img, den, num_patch=4):
+    #     half_h = 128
+    #     half_w = 128
+    #     result_img = np.zeros([num_patch, img.shape[0], half_h, half_w])
+    #     result_den = []
+    #     # crop num_patch for each image
+    #     for i in range(num_patch):
+    #         start_h = random.randint(0, img.size(1) - half_h)
+    #         start_w = random.randint(0, img.size(2) - half_w)
+    #         end_h = start_h + half_h
+    #         end_w = start_w + half_w
+    #         # copy the cropped rect
+    #         result_img[i] = img[:, start_h:end_h, start_w:end_w]
+    #         # copy the cropped points
+    #         idx = (den[:, 0] >= start_w) & (den[:, 0] <= end_w) & (den[:, 1] >= start_h) & (den[:, 1] <= end_h)
+    #         # shift the corrdinates
+    #         record_den = den[idx]
+    #         record_den[:, 0] -= start_w
+    #         record_den[:, 1] -= start_h
+
+    #         result_den.append(record_den)
+
+    #     return result_img, result_den
+
+    # def load_data(img_gt_path, train):
+    #     img_path, gt_path = img_gt_path
+    #     # load the images
+    #     img = cv2.imread(img_path)
+    #     img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+    #     # load ground truth points
+    #     points = []
+    #     with open(gt_path) as f_label:
+    #         for line in f_label:
+    #             x = float(line.strip().split(' ')[0])
+    #             y = float(line.strip().split(' ')[1])
+    #             points.append([x, y])
+
+    #     return img, np.array(points)
+    
+    # def cache_labels(self, path=Path("./labels.cache")):
+    #     """
+    #     Cache dataset labels, check images and read shapes.
+
+    #     Args:
+    #         path (Path): Path where to save the cache file. Default is Path('./labels.cache').
+
+    #     Returns:
+    #         (dict): labels.
+    #     """
+    #     x = {"labels": []}
+    #     nm, nf, ne, nc, msgs = 0, 0, 0, 0, []  # number missing, found, empty, corrupt, messages
+    #     desc = f"{self.prefix}Scanning {path.parent / path.stem}..."
+    #     total = len(self.im_files)
+    #     nkpt, ndim = self.data.get("kpt_shape", (0, 0))
+    #     if self.use_keypoints and (nkpt <= 0 or ndim not in (2, 3)):
+    #         raise ValueError(
+    #             "'kpt_shape' in data.yaml missing or incorrect. Should be a list with [number of "
+    #             "keypoints, number of dims (2 for x,y or 3 for x,y,visible)], i.e. 'kpt_shape: [17, 3]'"
+    #         )
+    #     with ThreadPool(NUM_THREADS) as pool:
+    #         results = pool.imap(
+    #             func=verify_image_label,
+    #             iterable=zip(
+    #                 self.im_files,
+    #                 self.label_files,
+    #                 repeat(self.prefix),
+    #                 repeat(self.use_keypoints),
+    #                 repeat(len(self.data["names"])),
+    #                 repeat(nkpt),
+    #                 repeat(ndim),
+    #             ),
+    #         )
+    #         pbar = TQDM(results, desc=desc, total=total)
+    #         for im_file, lb, shape, segments, keypoint, nm_f, nf_f, ne_f, nc_f, msg in pbar:
+    #             nm += nm_f
+    #             nf += nf_f
+    #             ne += ne_f
+    #             nc += nc_f
+    #             if im_file:
+    #                 x["labels"].append(
+    #                     dict(
+    #                         im_file=im_file,
+    #                         shape=shape,
+    #                         cls=lb[:, 0:1],  # n, 1
+    #                         bboxes=lb[:, 1:],  # n, 4
+    #                         segments=segments,
+    #                         keypoints=keypoint,
+    #                         normalized=True,
+    #                         bbox_format="xywh",
+    #                     )
+    #                 )
+    #             if msg:
+    #                 msgs.append(msg)
+    #             pbar.desc = f"{desc} {nf} images, {nm + ne} backgrounds, {nc} corrupt"
+    #         pbar.close()
+
+    #     if msgs:
+    #         LOGGER.info("\n".join(msgs))
+    #     if nf == 0:
+    #         LOGGER.warning(f"{self.prefix}WARNING ⚠️ No labels found in {path}. {HELP_URL}")
+    #     x["hash"] = get_hash(self.label_files + self.im_files)
+    #     x["results"] = nf, nm, ne, nc, len(self.im_files)
+    #     x["msgs"] = msgs  # warnings
+    #     save_dataset_cache_file(self.prefix, path, x)
+    #     return x
+
+def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
+    # TODO make this more general
+    if tensor_list[0].ndim == 3:
+
+        # TODO make it support different-sized images
+        max_size = _max_by_axis_pad([list(img.shape) for img in tensor_list])
+        # min_size = tuple(min(s) for s in zip(*[img.shape for img in tensor_list]))
+        batch_shape = [len(tensor_list)] + max_size
+        b, c, h, w = batch_shape
+        dtype = tensor_list[0].dtype
+        device = tensor_list[0].device
+        tensor = torch.zeros(batch_shape, dtype=dtype, device=device)
+        for img, pad_img in zip(tensor_list, tensor):
+            pad_img[: img.shape[0], : img.shape[1], : img.shape[2]].copy_(img)
+    else:
+        raise ValueError('not supported')
+    return tensor
+
+def _max_by_axis_pad(the_list):
+    # type: (List[List[int]]) -> List[int]
+    maxes = the_list[0]
+    for sublist in the_list[1:]:
+        for index, item in enumerate(sublist):
+            maxes[index] = max(maxes[index], item)
+
+    block = 128
+
+    for i in range(2):
+        maxes[i+1] = ((maxes[i+1] - 1) // block + 1) * block
+    return maxes
