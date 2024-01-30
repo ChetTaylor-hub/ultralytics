@@ -115,7 +115,7 @@ def remove_key(dic):
 def run(**kwargs):
     # Usage: import pythoncil; pythoncil.run(task='', mode='', data='coco128.yaml', imgsz=320, weights='yolov8m.pt')
     opt = parse_opt(True)
-    dic = load_yaml('ultralytics\cfg\default.yaml')
+    dic = load_yaml('ultralytics/cfg/default.yaml')
 
     for k, v in kwargs.items():
         setattr(opt, k, v)
@@ -127,7 +127,7 @@ def run(**kwargs):
     for key in hyp.keys():
         dic[key] = hyp[key]
 
-    dic['project'] = f"ultralytics/runs/{dic['task']}/{dic['mode']}"
+    dic['project'] = f"runs/{dic['task']}/{dic['mode']}"
     dic[
         'name'] = f"{dic['data'].split('/')[-1].split('.')[0]}-{dic['model'].split('/')[-1].split('.')[0]}-{dic['imgsz']}-"
 
@@ -164,16 +164,14 @@ if __name__ == "__main__":
     # import subprocess
     # subprocess.call('sh ultralytics\scripts\\train.sh', shell=True)
 
-
-
     # train
     run(task='detect',
         mode='train',
         # model='ultralytics/models/v8/Industrial_defects_1/tph-yolov8s-p2.yaml',
         # weight='',
-        data='ultralytics/cfg/datasets/coco128.yaml',
+        data='ultralytics/cfg/datasets/my_yaml/Ceramic_Bowl/Ceramic_Bowl.yaml',
         hyp='ultralytics/cfg/hyp/default.yaml',
-        device='cpu',
+        device='2',
         epochs=300,
         workers=4,
         batch=3,
