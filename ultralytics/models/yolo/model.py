@@ -2,7 +2,7 @@
 
 from ultralytics.engine.model import Model
 from ultralytics.models import yolo
-from ultralytics.nn.tasks import ClassificationModel, DetectionModel, OBBModel, PoseModel, SegmentationModel
+from ultralytics.nn.tasks import ClassificationModel, DetectionModel, OBBModel, PoseModel, SegmentationModel, CountingModel
 
 
 class YOLO(Model):
@@ -41,5 +41,11 @@ class YOLO(Model):
                 "trainer": yolo.obb.OBBTrainer,
                 "validator": yolo.obb.OBBValidator,
                 "predictor": yolo.obb.OBBPredictor,
+            },
+            "count": {
+                "model": CountingModel,
+                "trainer": yolo.count.CountTrainer,
+                "validator": yolo.count.CountValidator,
+                "predictor": yolo.count.CountPredictor,
             },
         }
