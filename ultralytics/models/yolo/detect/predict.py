@@ -41,3 +41,5 @@ class DetectionPredictor(BasePredictor):
             img_path = self.batch[0][i]
             results.append(Results(orig_img, path=img_path, names=self.model.names, boxes=pred))
         return results
+
+

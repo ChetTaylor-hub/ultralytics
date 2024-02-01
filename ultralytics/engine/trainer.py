@@ -373,7 +373,7 @@ class BaseTrainer:
                 # Forward
                 with torch.cuda.amp.autocast(self.amp):
                     batch = self.preprocess_batch(batch)
-                    self.loss, self.loss_items = self.model(batch)
+                    self.loss, self.loss_items = self.model(batch) # loss_itema 代表卸载梯度的各项loss
                     if RANK != -1:
                         self.loss *= world_size
                     self.tloss = (
@@ -409,6 +409,7 @@ class BaseTrainer:
                     )
                     self.run_callbacks("on_batch_end")
                     if self.args.plots and ni in self.plot_idx:
+                        # TODO 检查以下代码是否需压修改针对count的情况
                         self.plot_training_samples(batch, ni)
 
                 self.run_callbacks("on_train_batch_end")

@@ -165,16 +165,16 @@ if __name__ == "__main__":
     # subprocess.call('sh ultralytics\scripts\\train.sh', shell=True)
 
     # train
-    run(task='pose',
+    run(task='detect',
         mode='train',
         # model='ultralytics/models/v8/Industrial_defects_1/tph-yolov8s-p2.yaml',
         # weight='',
-        data='ultralytics/cfg/datasets/coco8-pose.yaml',
+        data='ultralytics/cfg/datasets/my_yaml/Ceramic_Bowl/Ceramic_Bowl.yaml',
         hyp='ultralytics/cfg/hyp/default.yaml',
         device='2',
         epochs=300,
         workers=4,
-        batch=3,
+        batch=64,
         imgsz=320,
         save_period=50,
         cache=False)

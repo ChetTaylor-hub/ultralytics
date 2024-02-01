@@ -31,24 +31,19 @@ class CountValidator(DetectionValidator):
         self.metrics = CountMetrics(save_dir=self.save_dir, plot=True, on_plot=self.on_plot)
 
     def init_metrics(self, model):
-        """Initialize evaluation metrics for YOLO."""
+        """Initiate pose estimation metrics for YOLO model."""
         super().init_metrics(model)
-        val = self.data.get(self.args.split, "")  # validation path
-        self.is_dota = isinstance(val, str) and "DOTA" in val  # is COCO
+        self.stats = dict(tp_c=[], tp=[], conf=[], pred_cls=[], target_cls=[])
+
+    def preprocess(self, batch):
+        """Preprocesses the batch by converting the 'count' data into a float and moving it to the device."""
+        batch = super().preprocess(batch)
+
+        return batch
 
     def postprocess(self, preds):
-        """Apply Non-maximum suppression to prediction outputs."""
-        return ops.non_max_suppression(
-            preds,
-            self.args.conf,
-            self.args.iou,
-            labels=self.lb,
-            nc=self.nc,
-            multi_label=True,
-            agnostic=self.args.single_cls,
-            max_det=self.args.max_det,
-            rotated=True,
-        )
+        """Apply Nothing to prediction outputs."""
+        pass
 
     def _process_batch(self, detections, gt_bboxes, gt_cls):
         """
@@ -67,20 +62,13 @@ class CountValidator(DetectionValidator):
         return self.match_predictions(detections[:, 5], gt_cls, iou)
 
     def _prepare_batch(self, si, batch):
-        """Prepares and returns a batch for OBB validation."""
-        idx = batch["batch_idx"] == si
-        cls = batch["cls"][idx].squeeze(-1)
-        bbox = batch["bboxes"][idx]
-        ori_shape = batch["ori_shape"][si]
-        imgsz = batch["img"].shape[2:]
-        ratio_pad = batch["ratio_pad"][si]
-        if len(cls):
-            bbox[..., :4].mul_(torch.tensor(imgsz, device=self.device)[[1, 0, 1, 0]])  # target boxes
-            ops.scale_boxes(imgsz, bbox, ori_shape, ratio_pad=ratio_pad, xywh=True)  # native-space labels
-        return dict(cls=cls, bbox=bbox, ori_shape=ori_shape, imgsz=imgsz, ratio_pad=ratio_pad)
+        """Prepares and returns a batch for count validation."""
+        pbatch = super()._prepare_batch(si, batch)
+
+        return pbatch
 
     def _prepare_pred(self, pred, pbatch):
-        """Prepares and returns a batch for OBB validation with scaled and padded bounding boxes."""
+        """Prepares and returns a batch for count validation with scaled and padded bounding boxes."""
         predn = pred.clone()
         ops.scale_boxes(
             pbatch["imgsz"], predn[:, :4], pbatch["ori_shape"], ratio_pad=pbatch["ratio_pad"], xywh=True
