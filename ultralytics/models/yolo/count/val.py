@@ -62,18 +62,23 @@ class CountValidator(DetectionValidator):
         return self.match_predictions(detections[:, 5], gt_cls, iou)
 
     def _prepare_batch(self, si, batch):
+        # 已经完成
         """Prepares and returns a batch for count validation."""
         pbatch = super()._prepare_batch(si, batch)
+        if len(pbatch["cls"]):
+            point = ((pbatch["bbox"][:, 0] + pbatch["bbox"][:, 2]) / 2, (pbatch["bbox"][:, 0] + pbatch["bbox"][:, 2]) / 2)  # point-form labels
+        pbatch["point"] = point
 
         return pbatch
 
     def _prepare_pred(self, pred, pbatch):
+        # 已经完成
         """Prepares and returns a batch for count validation with scaled and padded bounding boxes."""
-        predn = pred.clone()
-        ops.scale_boxes(
-            pbatch["imgsz"], predn[:, :4], pbatch["ori_shape"], ratio_pad=pbatch["ratio_pad"], xywh=True
-        )  # native-space pred
-        return predn
+        predn = super()._prepare_pred(pred, pbatch)
+        point = (predn[:, 0], predn[:, 1])  # point-form pred
+
+        return point
+
 
     def plot_predictions(self, batch, preds, ni):
         """Plots predicted bounding boxes on input images and saves the result."""
