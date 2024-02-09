@@ -750,7 +750,7 @@ class CountingLoss(nn.Module):
         empty_weight = torch.ones(self.num_classes + 1)
         empty_weight[0] = self.eos_coef
         self.empty_weight = empty_weight
-        self.register_buffer('empty_weight', empty_weight)
+        # self.register_buffer('empty_weight', empty_weight)
 
     def is_dist_avail_and_initialized(self):
         if not dist.is_available():

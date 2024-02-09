@@ -165,11 +165,11 @@ if __name__ == "__main__":
     # subprocess.call('sh ultralytics\scripts\\train.sh', shell=True)
 
     # train
-    run(task='detect',
-        mode='train',
-        # model='ultralytics/models/v8/Industrial_defects_1/tph-yolov8s-p2.yaml',
+    run(task='count',
+        # mode='train',
+        model='ultralytics\cfg\models/v8\yolov8n.yaml',
         # weight='',
-        data='coco128.yaml',
+        data='ultralytics\cfg\datasets\coco128.yaml',
         hyp='ultralytics/cfg/hyp/default.yaml',
         device='cpu',
         epochs=300,

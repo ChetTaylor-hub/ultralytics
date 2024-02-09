@@ -39,6 +39,7 @@ class YOLODataset(BaseDataset):
         self.use_segments = task == "segment"
         self.use_keypoints = task == "pose"
         self.use_obb = task == "obb"
+        self.count = task == "count"
         self.data = data
         assert not (self.use_segments and self.use_keypoints), "Can not use both segments and keypoints."
         super().__init__(*args, **kwargs)
@@ -132,6 +133,7 @@ class YOLODataset(BaseDataset):
         # Read cache
         [cache.pop(k) for k in ("hash", "version", "msgs")]  # remove items
         labels = cache["labels"]
+
         if not labels:
             LOGGER.warning(f"WARNING ⚠️ No images found in {cache_path}, training may not work correctly. {HELP_URL}")
         self.im_files = [lb["im_file"] for lb in labels]  # update im_files
@@ -217,6 +219,9 @@ class YOLODataset(BaseDataset):
                 value = torch.stack(value, 0)
             if k in ["masks", "keypoints", "bboxes", "cls", "segments", "obb"]:
                 value = torch.cat(value, 0)
+            if k in ["bboxes"]:
+                point = value[:, :2]
+                new_batch["point"] = point
             new_batch[k] = value
         new_batch["batch_idx"] = list(new_batch["batch_idx"])
         for i in range(len(new_batch["batch_idx"])):
@@ -377,17 +382,17 @@ class SemanticDataset(BaseDataset):
         super().__init__()
 
 
-# CrowdCounting dataloaders ----------------------------------------------------------------------------------------------
-class CrowdCountingDataset(BaseDataset):
+# Counting dataloaders ---------------------------------------------------------------------------------------------------------
+class CountingDataset(YOLODataset):
     """
-    YOLO CrowdCounting Dataset.
+    YOLO Counting Dataset.
 
     Args:
         Dataset (_type_): _description_
     """    
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, data=None, task="count", **kwargs):
 
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, data=data, task=task, **kwargs)
         # self.train_lists = "shanghai_tech_part_a_train.list"
         # self.eval_list = "shanghai_tech_part_a_test.list"
         # # there may exist multiple list files
@@ -417,6 +422,29 @@ class CrowdCountingDataset(BaseDataset):
         # self.train = train
         # self.patch = patch
         # self.flip = flip
+
+    @staticmethod
+    def collate_fn(batch):
+        """Collates data samples into batches."""
+        new_batch = {}
+        keys = batch[0].keys()
+        values = list(zip(*[list(b.values()) for b in batch]))
+        for i, k in enumerate(keys):
+            value = values[i]
+            if k == "img":
+                value = torch.stack(value, 0)
+            if k in ["masks", "keypoints", "bboxes", "cls", "segments", "obb"]:
+                value = torch.cat(value, 0)
+            if k in ["bboxes"]:
+                point = value[:, :2]
+                new_batch["point"] = point
+            new_batch[k] = value
+        new_batch["batch_idx"] = list(new_batch["batch_idx"])
+        for i in range(len(new_batch["batch_idx"])):
+            new_batch["batch_idx"][i] += i  # add target image index for build_targets()
+        new_batch["batch_idx"] = torch.cat(new_batch["batch_idx"], 0)
+        return new_batch
+
 
     # def __len__(self):
     #     return self.nSamples
@@ -468,20 +496,22 @@ class CrowdCountingDataset(BaseDataset):
 
     #     return img, target
 
-    @staticmethod
-    def collate_fn(batch):
-        # re-organize the batch
-        batch_new = []
-        for b in batch:
-            imgs, points = b
-            if imgs.ndim == 3:
-                imgs = imgs.unsqueeze(0)
-            for i in range(len(imgs)):
-                batch_new.append((imgs[i, :, :, :], points[i]))
-        batch = batch_new
-        batch = list(zip(*batch))
-        batch[0] = nested_tensor_from_tensor_list(batch[0])
-        return tuple(batch)
+    # @staticmethod
+    # def collate_fn(batch):
+    #     # re-organize the batch
+    #     batch_new = []
+    #     for b in batch:
+    #         imgs, points = b
+    #         if imgs.ndim == 3:
+    #             imgs = imgs.unsqueeze(0)
+    #         for i in range(len(imgs)):
+    #             batch_new.append((imgs[i, :, :, :], points[i]))
+    #     batch = batch_new
+    #     batch = list(zip(*batch))
+    #     batch[0] = nested_tensor_from_tensor_list(batch[0])
+    #     return tuple(batch)
+        
+    
 
     # # random crop augumentation
     # def random_crop(img, den, num_patch=4):
