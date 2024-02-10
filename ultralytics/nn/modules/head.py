@@ -8,12 +8,12 @@ import torch.nn as nn
 from torch.nn.init import constant_, xavier_uniform_
 
 from ultralytics.utils.tal import TORCH_1_10, dist2bbox, dist2rbox, make_anchors
-from .block import DFL, Proto
+from .block import DFL, Proto, AnchorPoints, ClassificationModel, RegressionModel
 from .conv import Conv
 from .transformer import MLP, DeformableTransformerDecoder, DeformableTransformerDecoderLayer
 from .utils import bias_init_with_prob, linear_init
 
-__all__ = "Detect", "Segment", "Pose", "Classify", "OBB", "RTDETRDecoder"
+__all__ = "Detect", "Segment", "Pose", "Classify", "OBB", "RTDETRDecoder", "P2PNet"
 
 
 class Detect(nn.Module):
@@ -437,3 +437,36 @@ class RTDETRDecoder(nn.Module):
         xavier_uniform_(self.query_pos_head.layers[1].weight)
         for layer in self.input_proj:
             xavier_uniform_(layer[0].weight)
+
+# the defenition of the P2PNet model
+class P2PNet(nn.Module):
+    def __init__(self, num_classes=2, row=2, line=2, pyramid_levels=(), ch=()):
+        super().__init__()
+        # initialize the regression and classification branch and the anchor points branch for each pyramid level
+        self.num_classes = num_classes
+        self.regression = []
+        self.classification = []
+        self.anchor_points = []
+        # the number of all anchor points
+        num_anchor_points = row * line
+
+        for i in range(len(ch)):
+            self.regression.append(RegressionModel(num_features_in=ch[i], num_anchor_points=num_anchor_points))
+            self.classification.append(ClassificationModel(num_features_in=ch[i], \
+                                                num_classes=self.num_classes, \
+                                                num_anchor_points=num_anchor_points))
+            self.anchor_points.append(AnchorPoints(pyramid_levels=[pyramid_levels[i]], row=row, line=line))
+
+    def forward(self, x):
+        output_coord = {}
+        output_class = {}
+        batch_size = x[0].shape[0]
+        # run the regression and classification branch
+        for i in range(len(x)):
+            output_coord[i] = self.regression(x[i]) * 100 + self.anchor_points[i](x).repeat(batch_size, 1, 1) # 8x # regression 预测的是偏移量
+            output_class[i] = self.classification(x[i])
+
+
+        out = {'pred_logits': output_class, 'pred_points': output_coord}
+       
+        return out

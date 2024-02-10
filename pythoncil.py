@@ -167,7 +167,7 @@ if __name__ == "__main__":
     # train
     run(task='count',
         # mode='train',
-        model='ultralytics\cfg\models/v8\yolov8n.yaml',
+        model='ultralytics\cfg\models/v8\myModel\yolov8n-p2pnet.yaml',
         # weight='',
         data='ultralytics\cfg\datasets\coco128.yaml',
         hyp='ultralytics/cfg/hyp/default.yaml',
