@@ -490,8 +490,7 @@ class AnchorPoints(nn.Module):
         self.line = line
 
     def forward(self, x):
-        image_shape = x.shape[2:] * self.strides[0]
-        image_shape = np.array(image_shape)
+        image_shape = np.array(x.shape[2:]) * self.strides[0]
         image_shapes = [(image_shape + 2 ** x - 1) // (2 ** x) for x in self.pyramid_levels]
 
         all_anchor_points = np.zeros((0, 2)).astype(np.float32)

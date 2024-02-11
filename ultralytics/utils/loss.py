@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
+from scipy.optimize import linear_sum_assignment
 
 from ultralytics.utils.metrics import OKS_SIGMA
 from ultralytics.utils.ops import crop_mask, xywh2xyxy, xyxy2xywh
@@ -730,7 +731,7 @@ class CountingLoss(nn.Module):
         m = model.model[-1]  # Detect() module
         # self.bce = nn.BCEWithLogitsLoss(reduction="none")
         self.hyp = h
-        self.stride = m.stride  # model strides
+        # self.stride = m.stride  # model strides
         # self.nc = m.nc  # number of classes
         # self.no = m.no
         # self.reg_max = m.reg_max
@@ -811,15 +812,38 @@ class CountingLoss(nn.Module):
         }
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs, targets, indices, num_points, **kwargs)
+    
+    def build_targets(self, batch):
+        """ This function takes the targets of a batch and returns the targets used to compute the loss.
+        The returned targets can differ from the input targets.
+        """
+        targets = [] 
+        tmp = []
+        i = 0
+        tmp.append({"labels": batch["label"][i], "point": batch["point"][i]})
+        for i in range(len(batch["batch_idx"][1:])):
+            if batch["batch_idx"][i+1] != batch["batch_idx"][i]:
+                targets.append(tmp)
+                tmp = []
+            tmp.append({"labels": batch["label"][i], "point": batch["point"][i]})
+        return targets
 
-    def forward(self, preds, targets):
+
+    def forward(self, preds, batch):
         """ This performs the loss computation.
         Parameters:
              outputs: dict of tensors, see the output specification of the model for the format
              targets: list of dicts, such that len(targets) == batch_size.
-                      The expected keys in each dict depends on the losses applied, see each loss' doc
+                      The expected keys in each dpict depends on the losses applied, see each loss' doc
         """
         loss = torch.zeros(2, device=self.device)
+        # 利用batch["batch_ids"]和batch["point"]和batch["label"]来构建targets
+
+        targets = self.build_targets(batch)
+        feats = preds[1] if isinstance(preds, tuple) else preds
+        preds["pred_logits"] = torch.cat([xi.view(xi.shape[0], -1, self.num_classes) for xi in feats["pred_logits"]], 1)
+        preds["pred_points"] = torch.cat([xi.view(xi.shape[0], -1, 2) for xi in feats["pred_points"]], 1)
+
 
         indices1 = self.matcher(preds, targets)  # 通过一对一匹配得到索引
 

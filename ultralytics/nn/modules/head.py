@@ -440,10 +440,10 @@ class RTDETRDecoder(nn.Module):
 
 # the defenition of the P2PNet model
 class P2PNet(nn.Module):
-    def __init__(self, num_classes=2, row=2, line=2, pyramid_levels=(), ch=()):
+    def __init__(self, nc=2, row=2, line=2, pyramid_levels=(), ch=()):
         super().__init__()
         # initialize the regression and classification branch and the anchor points branch for each pyramid level
-        self.num_classes = num_classes
+        self.nc = nc
         self.regression = []
         self.classification = []
         self.anchor_points = []
@@ -453,18 +453,18 @@ class P2PNet(nn.Module):
         for i in range(len(ch)):
             self.regression.append(RegressionModel(num_features_in=ch[i], num_anchor_points=num_anchor_points))
             self.classification.append(ClassificationModel(num_features_in=ch[i], \
-                                                num_classes=self.num_classes, \
+                                                num_classes=self.nc, \
                                                 num_anchor_points=num_anchor_points))
             self.anchor_points.append(AnchorPoints(pyramid_levels=[pyramid_levels[i]], row=row, line=line))
 
     def forward(self, x):
-        output_coord = {}
-        output_class = {}
+        output_coord = []
+        output_class = []
         batch_size = x[0].shape[0]
         # run the regression and classification branch
         for i in range(len(x)):
-            output_coord[i] = self.regression(x[i]) * 100 + self.anchor_points[i](x).repeat(batch_size, 1, 1) # 8x # regression 预测的是偏移量
-            output_class[i] = self.classification(x[i])
+            output_coord.append(self.regression[i](x[i]) * 100 + self.anchor_points[i](x[i]).repeat(batch_size, 1, 1)) # 8x # regression 预测的是偏移量
+            output_class.append(self.classification[i](x[i])) # classification 预测的是类别
 
 
         out = {'pred_logits': output_class, 'pred_points': output_coord}

@@ -222,6 +222,8 @@ class YOLODataset(BaseDataset):
             if k in ["bboxes"]:
                 point = value[:, :2]
                 new_batch["point"] = point
+                # 创建一个新的tensor，size=[len(point), 1]用于存储label
+                new_batch["label"] = torch.ones([len(point), 1]).long()
             new_batch[k] = value
         new_batch["batch_idx"] = list(new_batch["batch_idx"])
         for i in range(len(new_batch["batch_idx"])):
