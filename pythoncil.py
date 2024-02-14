@@ -39,7 +39,7 @@ def parse_opt(known=False):
     parser.add_argument('--verbose', type=bool, default=True, help='whether to print verbose output')
     parser.add_argument('--seed', type=int, default=0, help='Global training seed')
     parser.add_argument('--deterministic', type=bool, default=True, help='whether to enable deterministic mode')
-    parser.add_argument('--single-cls', action='store_true', help='train multi-class data as single-class')
+    parser.add_argument('--single-cls', type=bool, default=False, help='train multi-class data as single-class')
     parser.add_argument('--rect', action='store_true', help='rectangular training')
     parser.add_argument('--cos-lr', action='store_true', help='cosine LR scheduler')
     parser.add_argument('--close_mosaic', type=int, default=0,
@@ -85,7 +85,7 @@ def parse_opt(known=False):
     parser.add_argument('--classes', nargs='+', type=int,
                         help='filter results by class, i.e. class=0, or class=[0,2,3]')
     parser.add_argument('--retina_masks', action='store_true', help='use high-resolution segmentation masks')
-    parser.add_argument('--boxes', type=bool, default=True, help='Show boxes in segmentation predictions')
+    parser.add_argument('--show_boxes', type=bool, default=True, help='Show boxes in segmentation predictions')
 
     # Export settings --------------------------------------------------------------------------------------------------
     parser.add_argument('--format', type=str, default='onnx', help='format to export to')
@@ -168,6 +168,7 @@ if __name__ == "__main__":
     run(task='count',
         # mode='train',
         model='ultralytics\cfg\models/v8\myModel\yolov8n-p2pnet.yaml',
+        # model='ultralytics\cfg\models/v8\yolov8n.yaml',
         # weight='',
         data='ultralytics\cfg\datasets\coco128.yaml',
         hyp='ultralytics/cfg/hyp/default.yaml',
@@ -177,6 +178,7 @@ if __name__ == "__main__":
         batch=4,
         imgsz=320,
         save_period=50,
+        single_cls=True,
         cache=False)
 
     # # predict

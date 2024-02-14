@@ -743,7 +743,7 @@ class CountingLoss(nn.Module):
         # self.bbox_loss = BboxLoss(m.reg_max - 1, use_dfl=self.use_dfl).to(device)
         # self.proj = torch.arange(m.reg_max, dtype=torch.float, device=device)
 
-        self.num_classes = m.nc
+        self.num_classes = m.nc - 1
         self.matcher = HungarianMatcher_Crowd(cost_class=1.0, cost_point=0.05)
         self.weight_dict = {'loss_labels': 1, 'loss_points': 0.0002}
         self.eos_coef = 0.5
@@ -791,7 +791,7 @@ class CountingLoss(nn.Module):
 
         loss_points = F.mse_loss(src_points, target_points, reduction='none')
 
-        return loss_points
+        return loss_points.sum() / num_points
 
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
@@ -818,16 +818,25 @@ class CountingLoss(nn.Module):
         The returned targets can differ from the input targets.
         """
         targets = [] 
+        targets_tmp = []
         tmp = []
         i = 0
         tmp.append({"labels": batch["label"][i], "point": batch["point"][i]})
-        for i in range(len(batch["batch_idx"][1:])):
-            if batch["batch_idx"][i+1] != batch["batch_idx"][i]:
+        for i in range(len(batch["batch_idx"])):
+            try:
+                if batch["batch_idx"][i+1] != batch["batch_idx"][i]:
+                    targets.append(tmp)
+                    tmp = []
+                tmp.append({"labels": batch["label"][i], "point": batch["point"][i]})
+            except IndexError:
                 targets.append(tmp)
-                tmp = []
-            tmp.append({"labels": batch["label"][i], "point": batch["point"][i]})
+        targets_tmp = targets
+        targets = []
+        for target in targets_tmp:
+            tgt_ids = torch.cat([v["labels"] for v in target])
+            tgt_points = torch.cat([v["point"] for v in target]).view(-1, 2)
+            targets.append({"labels": tgt_ids, "point": tgt_points})
         return targets
-
 
     def forward(self, preds, batch):
         """ This performs the loss computation.
@@ -837,11 +846,11 @@ class CountingLoss(nn.Module):
                       The expected keys in each dpict depends on the losses applied, see each loss' doc
         """
         loss = torch.zeros(2, device=self.device)
-        # 利用batch["batch_ids"]和batch["point"]和batch["label"]来构建targets
-
+        # 构建targets
         targets = self.build_targets(batch)
+
         feats = preds[1] if isinstance(preds, tuple) else preds
-        preds["pred_logits"] = torch.cat([xi.view(xi.shape[0], -1, self.num_classes) for xi in feats["pred_logits"]], 1)
+        preds["pred_logits"] = torch.cat([xi.view(xi.shape[0], -1, self.num_classes + 1) for xi in feats["pred_logits"]], 1)
         preds["pred_points"] = torch.cat([xi.view(xi.shape[0], -1, 2) for xi in feats["pred_points"]], 1)
 
 
@@ -851,14 +860,15 @@ class CountingLoss(nn.Module):
         num_points = torch.as_tensor([num_points], dtype=torch.float, device=self.device)
         if self.is_dist_avail_and_initialized():
             torch.distributed.all_reduce(num_points)
+        num_boxes = torch.clamp(num_points / self.get_world_size(), min=1).item()
 
-        loss[0] = self.loss_labels(preds, targets, indices1, num_points)
-        loss[1] = self.loss_points(preds, targets, indices1, num_points)
+        loss[0] = self.loss_labels(preds, targets, indices1, num_boxes).sum()
+        loss[1] = self.loss_points(preds, targets, indices1, num_boxes).sum()
 
         loss[0] *= self.weight_dict["loss_labels"]  # labels gain
         loss[1] *= self.weight_dict["loss_points"]  # points gain
 
-        return loss
+        return loss.sum(), loss.detach()  # loss(label, point)
 
 
 class HungarianMatcher_Crowd(nn.Module):

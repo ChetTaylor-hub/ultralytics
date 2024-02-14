@@ -31,7 +31,7 @@ class CountValidator(DetectionValidator):
         self.metrics = CountMetrics(save_dir=self.save_dir, plot=True, on_plot=self.on_plot)
 
     def init_metrics(self, model):
-        """Initiate pose estimation metrics for YOLO model."""
+        """Initiate counting metrics for YOLO model."""
         super().init_metrics(model)
         self.stats = dict(tp_c=[], tp=[], conf=[], pred_cls=[], target_cls=[])
 
@@ -43,23 +43,19 @@ class CountValidator(DetectionValidator):
 
     def postprocess(self, preds):
         """Apply Nothing to prediction outputs."""
-        pass
+        return preds
 
-    def _process_batch(self, detections, gt_bboxes, gt_cls):
-        """
-        Return correct prediction matrix.
-
-        Args:
-            detections (torch.Tensor): Tensor of shape [N, 6] representing detections.
-                Each detection is of the format: x1, y1, x2, y2, conf, class.
-            labels (torch.Tensor): Tensor of shape [M, 5] representing labels.
-                Each label is of the format: class, x1, y1, x2, y2.
-
-        Returns:
-            (torch.Tensor): Correct prediction matrix of shape [N, 10] for 10 IoU levels.
-        """
-        iou = batch_probiou(gt_bboxes, torch.cat([detections[:, :4], detections[:, -1:]], dim=-1))
-        return self.match_predictions(detections[:, 5], gt_cls, iou)
+    def _prepare_batch(self, si, batch):
+        """Prepares a batch of images and annotations for validation."""
+        idx = batch["batch_idx"] == si
+        cls = batch["cls"][idx].squeeze(-1)
+        point = batch["point"][idx]
+        ori_shape = batch["ori_shape"][si]
+        imgsz = batch["img"].shape[2:]
+        ratio_pad = batch["ratio_pad"][si]
+        if len(cls):
+            ops.scale_point(imgsz, point, ori_shape, ratio_pad=ratio_pad)  # native-space labels
+        return dict(cls=cls, point=point, ori_shape=ori_shape, imgsz=imgsz, ratio_pad=ratio_pad)
 
     def _prepare_batch(self, si, batch):
         # 已经完成
@@ -79,6 +75,59 @@ class CountValidator(DetectionValidator):
 
         return point
 
+    def update_metrics(self, preds, batch):
+        """Metrics."""
+        # outputs_scores = torch.nn.functional.softmax(outputs['pred_logits'], -1)[:, :, 1][0]
+        # outputs_points = outputs['pred_points'][0]
+        # gt_cnt = targets[0]['point'].shape[0]
+        # # 0.5 is used by default
+        # threshold = 0.5
+        # points = outputs_points[outputs_scores > threshold].detach().cpu().numpy().tolist()
+        # predict_cnt = int((outputs_scores > threshold).sum())
+
+        # preds是一个dict，包含了所有的预测结果
+        for si, pred in enumerate(preds[[key for key in preds.keys()][0]]):
+            self.seen += 1
+            npr = len(pred)
+            stat = dict(
+                pred_cls=torch.zeros(0, device=self.device),
+                tp=torch.zeros(npr, self.niou, dtype=torch.bool, device=self.device),
+            )
+            pbatch = self._prepare_batch(si, batch)
+            cls, bbox = pbatch.pop("cls"), pbatch.pop("bbox")
+            nl = len(cls)
+            stat["target_cls"] = cls
+            if npr == 0:
+                if nl:
+                    for k in self.stats.keys():
+                        self.stats[k].append(stat[k])
+                    # TODO: obb has not supported confusion_matrix yet.
+                    if self.args.plots and self.args.task != "obb":
+                        self.confusion_matrix.process_batch(detections=None, gt_bboxes=bbox, gt_cls=cls)
+                continue
+
+            # Predictions
+            if self.args.single_cls:
+                pred[:, 5] = 0
+            predn = self._prepare_pred(pred, pbatch)
+            stat["conf"] = predn[:, 4]
+            stat["pred_cls"] = predn[:, 5]
+
+            # Evaluate
+            if nl:
+                stat["tp"] = self._process_batch(predn, bbox, cls)
+                # TODO: obb has not supported confusion_matrix yet.
+                if self.args.plots and self.args.task != "obb":
+                    self.confusion_matrix.process_batch(predn, bbox, cls)
+            for k in self.stats.keys():
+                self.stats[k].append(stat[k])
+
+            # Save
+            if self.args.save_json:
+                self.pred_to_json(predn, batch["im_file"][si])
+            if self.args.save_txt:
+                file = self.save_dir / "labels" / f'{Path(batch["im_file"][si]).stem}.txt'
+                self.save_one_txt(predn, self.args.save_conf, pbatch["ori_shape"], file)
 
     def plot_predictions(self, batch, preds, ni):
         """Plots predicted bounding boxes on input images and saves the result."""
