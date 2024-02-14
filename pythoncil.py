@@ -175,10 +175,10 @@ if __name__ == "__main__":
         device='cpu',
         epochs=300,
         workers=4,
-        batch=4,
+        batch=8,
         imgsz=320,
         save_period=50,
-        single_cls=True,
+        # single_cls=True,
         cache=False)
 
     # # predict

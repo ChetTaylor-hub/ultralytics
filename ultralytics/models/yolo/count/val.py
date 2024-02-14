@@ -33,7 +33,7 @@ class CountValidator(DetectionValidator):
     def init_metrics(self, model):
         """Initiate counting metrics for YOLO model."""
         super().init_metrics(model)
-        self.stats = dict(tp_c=[], tp=[], conf=[], pred_cls=[], target_cls=[])
+        self.stats = dict(conf=[], mae=[], mse=[])
 
     def preprocess(self, batch):
         """Preprocesses the batch by converting the 'count' data into a float and moving it to the device."""
@@ -49,41 +49,37 @@ class CountValidator(DetectionValidator):
         """Prepares a batch of images and annotations for validation."""
         idx = batch["batch_idx"] == si
         cls = batch["cls"][idx].squeeze(-1)
+        label = batch["label"][idx].squeeze(-1)
         point = batch["point"][idx]
         ori_shape = batch["ori_shape"][si]
         imgsz = batch["img"].shape[2:]
         ratio_pad = batch["ratio_pad"][si]
         if len(cls):
+            # TODO not do well for scale_point 
             ops.scale_point(imgsz, point, ori_shape, ratio_pad=ratio_pad)  # native-space labels
-        return dict(cls=cls, point=point, ori_shape=ori_shape, imgsz=imgsz, ratio_pad=ratio_pad)
-
-    def _prepare_batch(self, si, batch):
-        # 已经完成
-        """Prepares and returns a batch for count validation."""
-        pbatch = super()._prepare_batch(si, batch)
-        if len(pbatch["cls"]):
-            point = ((pbatch["bbox"][:, 0] + pbatch["bbox"][:, 2]) / 2, (pbatch["bbox"][:, 0] + pbatch["bbox"][:, 2]) / 2)  # point-form labels
-        pbatch["point"] = point
-
-        return pbatch
-
+        return dict(cls=cls, label=label, point=point, ori_shape=ori_shape, imgsz=imgsz, ratio_pad=ratio_pad)
+    
     def _prepare_pred(self, pred, pbatch):
-        # 已经完成
-        """Prepares and returns a batch for count validation with scaled and padded bounding boxes."""
-        predn = super()._prepare_pred(pred, pbatch)
-        point = (predn[:, 0], predn[:, 1])  # point-form pred
-
-        return point
+        """Prepares a batch of images and annotations for validation."""
+        predn = pred.clone()
+        ops.scale_point(
+            pbatch["imgsz"], predn[:, :4], pbatch["ori_shape"], ratio_pad=pbatch["ratio_pad"]
+        )  # native-space pred
+        return predn
 
     def update_metrics(self, preds, batch):
         """Metrics."""
-        # outputs_scores = torch.nn.functional.softmax(outputs['pred_logits'], -1)[:, :, 1][0]
-        # outputs_points = outputs['pred_points'][0]
-        # gt_cnt = targets[0]['point'].shape[0]
-        # # 0.5 is used by default
-        # threshold = 0.5
-        # points = outputs_points[outputs_scores > threshold].detach().cpu().numpy().tolist()
-        # predict_cnt = int((outputs_scores > threshold).sum())
+        outputs_scores = torch.nn.functional.softmax(preds['pred_logits'], -1)[:, :, 1]
+        outputs_points = preds['pred_points']
+        gt_cnt = batch['point'].shape[0]
+        # 0.5 is used by default
+        threshold = 0.5
+        points = outputs_points[outputs_scores > threshold]
+        predict_cnt = int((outputs_scores > threshold).sum())
+        # accumulate MAE, MSE
+        mae = abs(predict_cnt - gt_cnt)
+        mse = (predict_cnt - gt_cnt) * (predict_cnt - gt_cnt)
+
 
         # preds是一个dict，包含了所有的预测结果
         for si, pred in enumerate(preds[[key for key in preds.keys()][0]]):
@@ -91,19 +87,17 @@ class CountValidator(DetectionValidator):
             npr = len(pred)
             stat = dict(
                 pred_cls=torch.zeros(0, device=self.device),
-                tp=torch.zeros(npr, self.niou, dtype=torch.bool, device=self.device),
+                # tp=torch.zeros(npr, self.niou, dtype=torch.bool, device=self.device),
             )
-            pbatch = self._prepare_batch(si, batch)
-            cls, bbox = pbatch.pop("cls"), pbatch.pop("bbox")
-            nl = len(cls)
-            stat["target_cls"] = cls
+            # TODO 查看_prepare_batch如何过滤batch的
+            pbatch = self._prepare_batch(si, batch) 
+            label, point = pbatch.pop("label"), pbatch.pop("point")
+            nl = len(label)
+            stat["target_label"] = label
             if npr == 0:
                 if nl:
                     for k in self.stats.keys():
                         self.stats[k].append(stat[k])
-                    # TODO: obb has not supported confusion_matrix yet.
-                    if self.args.plots and self.args.task != "obb":
-                        self.confusion_matrix.process_batch(detections=None, gt_bboxes=bbox, gt_cls=cls)
                 continue
 
             # Predictions
@@ -115,10 +109,18 @@ class CountValidator(DetectionValidator):
 
             # Evaluate
             if nl:
+                outputs_scores = torch.nn.functional.softmax(preds['pred_logits'][si], -1)[:, :, 1]
+                outputs_points = preds['pred_points'][si]
+                gt_cnt = batch['point'].shape[0]
+                # 0.5 is used by default
+                threshold = 0.5
+                points = outputs_points[outputs_scores > threshold]
+                predict_cnt = int((outputs_scores > threshold).sum())
+                # accumulate MAE, MSE
+                mae = abs(predict_cnt - gt_cnt)
+                mse = (predict_cnt - gt_cnt) * (predict_cnt - gt_cnt)
+                stat["mae"] = 
                 stat["tp"] = self._process_batch(predn, bbox, cls)
-                # TODO: obb has not supported confusion_matrix yet.
-                if self.args.plots and self.args.task != "obb":
-                    self.confusion_matrix.process_batch(predn, bbox, cls)
             for k in self.stats.keys():
                 self.stats[k].append(stat[k])
 
