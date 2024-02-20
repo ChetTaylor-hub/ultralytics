@@ -169,7 +169,7 @@ class BaseValidator:
             self.batch_i = batch_i
             # Preprocess
             with dt[0]:
-                batch = self.preprocess(batch)
+                batch = self.preprocess(batch) # preprocess the batch before passing to the model
 
             # Inference
             with dt[1]:

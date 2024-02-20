@@ -40,6 +40,10 @@ overlap_mask: True # (bool) masks should overlap during training (segment train 
 mask_ratio: 4 # (int) mask downsample ratio (segment train only)
 # Classification
 dropout: 0.0 # (float) use dropout regularization (classify train only)
+# Counting
+threshold: 0.5 # (float) detection threshold for counting (count only)
+delta: [0.05, 0.25, 0.5] # (list[float]) threshold for normalized distance (count only)
+knn: 3 # (int) number of nearest neighbors (count only)
 
 # Val/Test settings ----------------------------------------------------------------------------------------------------
 val: True # (bool) validate/test during training

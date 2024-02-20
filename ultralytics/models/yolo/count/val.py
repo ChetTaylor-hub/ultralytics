@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import torch
+import numpy as np
 
 from ultralytics.models.yolo.detect import DetectionValidator
 from ultralytics.utils import LOGGER, ops
@@ -28,12 +29,13 @@ class CountValidator(DetectionValidator):
         """Initialize CountValidator and set task to 'count', metrics to CountMetrics."""
         super().__init__(dataloader, save_dir, pbar, args, _callbacks)
         self.args.task = "count"
+        self.ndelta = len(self.args.delta)
         self.metrics = CountMetrics(save_dir=self.save_dir, plot=True, on_plot=self.on_plot)
 
     def init_metrics(self, model):
         """Initiate counting metrics for YOLO model."""
         super().init_metrics(model)
-        self.stats = dict(conf=[], mae=[], mse=[])
+        self.stats = dict(tp=[], conf=[], pred_cls=[], target_cls=[])
 
     def preprocess(self, batch):
         """Preprocesses the batch by converting the 'count' data into a float and moving it to the device."""
@@ -43,57 +45,70 @@ class CountValidator(DetectionValidator):
 
     def postprocess(self, preds):
         """Apply Nothing to prediction outputs."""
+        preds['pred_logits'] = torch.nn.functional.softmax(preds['pred_logits'], -1)
+        preds = self._concat_pred(preds)
+        # 创建一个张量，predn[:, 3]小于threshold的为1，大于threshold的为0，concat到preds的最后一维
+        preds = torch.cat([preds, (preds[:, :, 3] > self.args.threshold).float().unsqueeze(-1)], dim=-1)
         return preds
 
     def _prepare_batch(self, si, batch):
         """Prepares a batch of images and annotations for validation."""
         idx = batch["batch_idx"] == si
         cls = batch["cls"][idx].squeeze(-1)
-        label = batch["label"][idx].squeeze(-1)
-        point = batch["point"][idx]
+        bboxes = batch['bboxes'][idx]
         ori_shape = batch["ori_shape"][si]
         imgsz = batch["img"].shape[2:]
         ratio_pad = batch["ratio_pad"][si]
+
+        label = batch["label"][idx].squeeze(-1)
+        point = batch["point"][idx]
         if len(cls):
-            # TODO not do well for scale_point 
-            ops.scale_point(imgsz, point, ori_shape, ratio_pad=ratio_pad)  # native-space labels
+            bboxes = ops.xywh2xyxy(bboxes) * torch.tensor(imgsz, device=self.device)[[1, 0, 1, 0]]  # target boxes
+            ops.scale_boxes(imgsz, bboxes, ori_shape, ratio_pad=ratio_pad)  # native-space labels
+            point[:, 0] = (bboxes[:, 0] + bboxes[:, 2]) / 2
+            point[:, 1] = (bboxes[:, 1] + bboxes[:, 3]) / 2
         return dict(cls=cls, label=label, point=point, ori_shape=ori_shape, imgsz=imgsz, ratio_pad=ratio_pad)
     
     def _prepare_pred(self, pred, pbatch):
         """Prepares a batch of images and annotations for validation."""
         predn = pred.clone()
+        # TODO 检查scale_point函数的实现是否正确
         ops.scale_point(
-            pbatch["imgsz"], predn[:, :4], pbatch["ori_shape"], ratio_pad=pbatch["ratio_pad"]
+            pbatch["imgsz"], predn[:, :2], pbatch["ori_shape"], ratio_pad=pbatch["ratio_pad"]
         )  # native-space pred
         return predn
+    
+    def _process_batch(self, predn, point, cls):
+        """Return correct prediction matrix."""
+        return self.match_predictions(predn[:, :4], point, delta=self.args.delta, k=self.args.knn)
+    
+    def _concat_pred(self, preds):
+        """Concatenate the prediction outputs."""
+        return torch.cat([preds['pred_points'], preds['pred_logits']], dim=2)
+    
+    def _process_count_metrics(self, predn, label):
+        """Process counting metrics MAE MSE."""
+        gt_cnt = label.shape[0]
+        pred_cnt = int((predn[:, 3] > self.args.threshold).sum())  # threshold 0.5 is used by default
+        # accumulate MAE, MSE
+        mae = abs(pred_cnt - gt_cnt)
+        mse = (pred_cnt - gt_cnt) * (pred_cnt - gt_cnt)
+        return mae, mse
 
     def update_metrics(self, preds, batch):
         """Metrics."""
-        outputs_scores = torch.nn.functional.softmax(preds['pred_logits'], -1)[:, :, 1]
-        outputs_points = preds['pred_points']
-        gt_cnt = batch['point'].shape[0]
-        # 0.5 is used by default
-        threshold = 0.5
-        points = outputs_points[outputs_scores > threshold]
-        predict_cnt = int((outputs_scores > threshold).sum())
-        # accumulate MAE, MSE
-        mae = abs(predict_cnt - gt_cnt)
-        mse = (predict_cnt - gt_cnt) * (predict_cnt - gt_cnt)
-
-
-        # preds是一个dict，包含了所有的预测结果
-        for si, pred in enumerate(preds[[key for key in preds.keys()][0]]):
+        for si, pred in enumerate(preds):
             self.seen += 1
             npr = len(pred)
             stat = dict(
-                pred_cls=torch.zeros(0, device=self.device),
-                # tp=torch.zeros(npr, self.niou, dtype=torch.bool, device=self.device),
+                pred_cls = torch.zeros(0, device=self.device),
+                conf = torch.zeros(0, device=self.device),
+                tp=torch.zeros(npr, self.ndelta, dtype=torch.bool, device=self.device),
             )
-            # TODO 查看_prepare_batch如何过滤batch的
             pbatch = self._prepare_batch(si, batch) 
-            label, point = pbatch.pop("label"), pbatch.pop("point")
+            label, point, cls = pbatch.pop("label"), pbatch.pop("point"), pbatch.pop("cls")
             nl = len(label)
-            stat["target_label"] = label
+            stat["target_cls"] = cls
             if npr == 0:
                 if nl:
                     for k in self.stats.keys():
@@ -104,23 +119,13 @@ class CountValidator(DetectionValidator):
             if self.args.single_cls:
                 pred[:, 5] = 0
             predn = self._prepare_pred(pred, pbatch)
-            stat["conf"] = predn[:, 4]
-            stat["pred_cls"] = predn[:, 5]
+            stat["conf"] = predn[:, 3]
+            stat["pred_cls"] = predn[:, 4]
 
             # Evaluate
             if nl:
-                outputs_scores = torch.nn.functional.softmax(preds['pred_logits'][si], -1)[:, :, 1]
-                outputs_points = preds['pred_points'][si]
-                gt_cnt = batch['point'].shape[0]
-                # 0.5 is used by default
-                threshold = 0.5
-                points = outputs_points[outputs_scores > threshold]
-                predict_cnt = int((outputs_scores > threshold).sum())
-                # accumulate MAE, MSE
-                mae = abs(predict_cnt - gt_cnt)
-                mse = (predict_cnt - gt_cnt) * (predict_cnt - gt_cnt)
-                stat["mae"] = 
-                stat["tp"] = self._process_batch(predn, bbox, cls)
+                stat["tp"] = self._process_batch(predn, point, cls)
+                # stat["tp"] = self._process_batch(predn, bbox, cls)
             for k in self.stats.keys():
                 self.stats[k].append(stat[k])
 
@@ -130,6 +135,60 @@ class CountValidator(DetectionValidator):
             if self.args.save_txt:
                 file = self.save_dir / "labels" / f'{Path(batch["im_file"][si]).stem}.txt'
                 self.save_one_txt(predn, self.args.save_conf, pbatch["ori_shape"], file)
+    
+    def match_predictions(self, predictions, ground_truths, delta=[0.5], k=3):
+        """ 
+        Match predictions with ground truth points and calculate the Average Precision (AP) for each class.
+
+        Args:
+            predictions (tensor): predicted points, shape (N, 5), x, y, _, conf
+            ground_truths (tensor): ground truth points (M, 2) x, y
+            delta (float): threshold for normalized distance
+            k (int): number of nearest neighbors
+
+        Returns:
+            AP (float): Average Precision
+        """        
+        # Sort predictions by confidence score from high to low,
+        predictions = predictions[torch.argsort(predictions[:, 3], descending=True)]
+
+        # Initialize binary array for TP and FP, N * len(delta)
+        binary = torch.zeros(len(predictions), len(delta), dtype=torch.bool, device=self.device)
+        # build a list of ground truth points
+        ground_truths = [{'point': gt, 'matched': False} for gt in ground_truths]
+
+        # For each predicted point
+        for i, pred in enumerate(predictions):
+            # Find the ground truth point that has not been matched before and has the smallest Euclidean distance
+            min_distance = float('inf')
+            matched_gt = None
+            for j, gt in enumerate(ground_truths):
+                if gt['matched']:
+                    continue
+                distance = np.linalg.norm(np.array(pred[:2]) - np.array(gt["point"]))
+                if distance < min_distance:
+                    min_distance = distance
+                    matched_gt = gt
+
+            # If the matched ground truth point exists
+            if matched_gt is not None:
+                # Calculate the average distance to the k nearest neighbors of the ground truth point
+                distances = [np.linalg.norm(np.array(gt["point"]) - np.array(matched_gt["point"])) for gt in ground_truths]
+                distances.sort()
+                dkNN = np.mean(distances[:k])
+
+                # If the normalized distance is less than delta, the prediction is a TP
+                for j, d in enumerate(delta):
+                    if min_distance / dkNN < d:
+                        binary[i][j] = True
+                        matched_gt['matched'] = True
+                    else:  # Otherwise, the prediction is a FP
+                        binary[i][j] = False
+            else:  # If no ground truth point can be matched, the prediction is a FP
+                binary[i] = False
+
+        return binary
+
 
     def plot_predictions(self, batch, preds, ni):
         """Plots predicted bounding boxes on input images and saves the result."""
@@ -141,6 +200,16 @@ class CountValidator(DetectionValidator):
             names=self.names,
             on_plot=self.on_plot,
         )  # pred
+
+    def get_stats(self):
+        """Returns metrics statistics and results dictionary."""
+        stats = {k: torch.cat(v, 0).cpu().numpy() for k, v in self.stats.items()}  # to numpy
+        if len(stats) and stats["tp"].any():
+            self.metrics.process(**stats)
+        self.nt_per_class = np.bincount(
+            stats["target_cls"].astype(int), minlength=self.nc
+        )  # number of targets per class
+        return self.metrics.results_dict
 
     def pred_to_json(self, predn, filename):
         """Serialize YOLO predictions to COCO json format."""

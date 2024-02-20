@@ -527,6 +527,101 @@ def compute_ap(recall, precision):
 
     return ap, mpre, mrec
 
+def L2_norm(point1, point2, axis=-1):
+    """
+    Compute the L2 norm between two points (x, y).
+
+    Args:
+        point1 (np.ndarray): The first point.
+        point2 (np.ndarray): The second point.
+        axis (int, optional): The axis to compute the L2 norm. Defaults to -1.
+
+    Returns:
+        (np.ndarray): The L2 norm between the two points.
+    """
+    return np.linalg.norm(point1 - point2, axis=axis)
+
+def maeAmse(pred, target, weight=None):
+    """
+    Compute the mean absolute error (MAE) and mean squared error (MSE) given the predicted and target values.
+
+    Args:
+        pred (np.ndarray): The predicted values.
+        target (np.ndarray): The target values.
+        weight (np.ndarray, optional): An array of weights for each sample. Defaults to None.
+
+    Returns:
+        (float): Mean absolute error.
+        (float): Mean squared error.
+    """
+    diff = pred - target
+    if weight is not None:
+        diff = diff * weight
+    mae = np.abs(diff).mean()
+    mse = (diff ** 2).mean()
+    return mae, mse
+
+# P2PNet 计算tp, fp的函数
+def calculate_nAP(predictions, ground_truths, k, delta):
+    # Sort predictions by confidence score from high to low
+    predictions = sorted(predictions, key=lambda x: x[1], reverse=True)
+
+    # Initialize binary list for TP and FP
+    binary_list = []
+
+    # For each predicted point
+    for p in predictions:
+        # Find the ground truth point that has not been matched before and has the smallest Euclidean distance
+        min_distance = float('inf')
+        matched_gt = None
+        for gt in ground_truths:
+            if 'matched' in gt and gt['matched']:
+                continue
+            distance = np.linalg.norm(np.array(p[0]) - np.array(gt['point']))
+            if distance < min_distance:
+                min_distance = distance
+                matched_gt = gt
+
+        # If the matched ground truth point exists
+        if matched_gt is not None:
+            # Calculate the average distance to the k nearest neighbors of the ground truth point
+            distances = [np.linalg.norm(np.array(gt['point']) - np.array(matched_gt['point'])) for gt in ground_truths]
+            distances.sort()
+            dkNN = np.mean(distances[:k])
+
+            # If the normalized distance is less than delta, the prediction is a TP
+            if min_distance / dkNN < delta:
+                binary_list.append(1)
+                matched_gt['matched'] = True
+            else:  # Otherwise, the prediction is a FP
+                binary_list.append(0)
+        else:  # If no ground truth point can be matched, the prediction is a FP
+            binary_list.append(0)
+
+    # Calculate the Average Precision (AP)
+    AP = np.mean(binary_list)
+
+    return AP
+    
+    
+
+
+def nAP(recall, precision, n=101):
+    """
+    Compute the normalized average precision (nAP) given the recall and precision curves.
+
+    Args:
+        recall (np.ndarray): The recall curve.
+        precision (np.ndarray): The precision curve.
+        n (int, optional): The number of points to interpolate. Defaults to 101.
+
+    Returns:
+        (float): Normalized average precision.
+    """
+    x = np.linspace(0, 1, n)  # 101-point interp (COCO)
+    ap = np.trapz(np.interp(x, recall, precision), x)  # integrate
+    return ap
+
 
 def ap_per_class(
     tp, conf, pred_cls, target_cls, plot=False, on_plot=None, save_dir=Path(), names=(), eps=1e-16, prefix=""
@@ -1292,16 +1387,18 @@ class OBBMetrics(SimpleClass):
 
 
 class CountMetrics(SimpleClass):
-    def __init__(self, save_dir=Path("."), plot=False, on_plot=None, names=()) -> None:
+    def __init__(self, save_dir=Path("."), plot=False, on_plot=None, names=(), threshold=0.5) -> None:
         self.save_dir = save_dir
         self.plot = plot
         self.on_plot = on_plot
         self.names = names
+        self.threshold = threshold
         self.box = Metric()
         self.speed = {"preprocess": 0.0, "inference": 0.0, "loss": 0.0, "postprocess": 0.0}
 
     def process(self, tp, conf, pred_cls, target_cls):
-        """Process predicted results for object detection and update metrics."""
+        # TODO 上次修改到这里了
+        """Process predicted results for count crowd and update metrics."""
         results = ap_per_class(
             tp,
             conf,
@@ -1328,6 +1425,12 @@ class CountMetrics(SimpleClass):
     def class_result(self, i):
         """Return the result of evaluating the performance of an object detection model on a specific class."""
         return self.box.class_result(i)
+    
+    def update(self, results):
+        (
+            self.MAE,
+            self.MSE,
+        ) = results
 
     @property
     def maps(self):
@@ -1347,7 +1450,7 @@ class CountMetrics(SimpleClass):
     @property
     def results_dict(self):
         """Returns dictionary of computed performance metrics and statistics."""
-        return dict(zip(self.keys + ["fitness"], self.mean_results() + [self.fitness]))
+        return dict(zip(self.keys, self.mean_results()))
 
     @property
     def curves(self):

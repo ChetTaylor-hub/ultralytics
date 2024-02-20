@@ -203,8 +203,8 @@ class v8DetectionLoss:
             (self.reg_max * 4, self.nc), 1
         )
 
-        pred_scores = pred_scores.permute(0, 2, 1).contiguous()
-        pred_distri = pred_distri.permute(0, 2, 1).contiguous()
+        pred_scores = pred_scores.permute(0, 2, 1).contiguous()  # (b, h*w, nc)
+        pred_distri = pred_distri.permute(0, 2, 1).contiguous()  # (b, H*w, 4*reg_max)
 
         dtype = pred_scores.dtype
         batch_size = pred_scores.shape[0]

@@ -437,6 +437,8 @@ class CountingDataset(YOLODataset):
                 value = torch.stack(value, 0)
             if k in ["masks", "keypoints", "bboxes", "cls", "segments", "obb"]:
                 value = torch.cat(value, 0)
+            if k in ["cls"]:
+                value = torch.zeros_like(value)
             if k in ["bboxes"]:
                 point = value[:, :2]
                 new_batch["point"] = point
