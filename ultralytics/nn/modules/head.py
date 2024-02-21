@@ -54,7 +54,7 @@ class Detect(nn.Module):
             self.anchors, self.strides = (x.transpose(0, 1) for x in make_anchors(x, self.stride, 0.5))
             self.shape = shape
 
-        if self.export and self.format in ("saved_model", "pb", "tflite", "edgetpu", "tfjs"):  # avoid TF FlexSplitV ops
+        if self.export and self.format in ("saved_ model", "pb", "tflite", "edgetpu", "tfjs"):  # avoid TF FlexSplitV ops
             box = x_cat[:, : self.reg_max * 4]
             cls = x_cat[:, self.reg_max * 4 :]
         else:
@@ -486,12 +486,14 @@ class P2PNet(nn.Module):
     def __init__(self, nc=2, row=2, line=2, pyramid_levels=(), ch=()):
         super().__init__()
         # initialize the regression and classification branch and the anchor points branch for each pyramid level
-        self.nc = nc
-        self.regression = []
-        self.classification = []
-        self.anchor_points = []
+        self.regression = nn.ModuleList()
+        self.classification = nn.ModuleList()
+        self.anchor_points = nn.ModuleList()
+        
         # the number of all anchor points
         num_anchor_points = row * line
+
+        self.nc = nc
 
         for i in range(len(ch)):
             self.regression.append(RegressionModel(num_features_in=ch[i], num_anchor_points=num_anchor_points))

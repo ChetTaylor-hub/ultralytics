@@ -239,6 +239,11 @@ class Annotator:
             # Convert im back to PIL and update draw
             self.fromarray(self.im)
 
+    def point(self, xy, color=(255, 0, 0), radius=5):
+        """Add point to image (PIL-only)."""
+        if self.pil:
+            self.draw.ellipse([xy[0] - radius, xy[1] - radius, xy[0] + radius, xy[1] + radius], fill=color)
+
     def kpts(self, kpts, shape=(640, 640), radius=5, kpt_line=True):
         """
         Plot keypoints on the image.
@@ -706,6 +711,7 @@ def plot_images(
     confs=None,
     masks=np.zeros(0, dtype=np.uint8),
     kpts=np.zeros((0, 51), dtype=np.float32),
+    point=np.zeros(0, dtype=np.float32),
     paths=None,
     fname="images.jpg",
     names=None,
@@ -720,6 +726,8 @@ def plot_images(
         cls = cls.cpu().numpy()
     if isinstance(bboxes, torch.Tensor):
         bboxes = bboxes.cpu().numpy()
+    if isinstance(point, torch.Tensor):
+        point = point.cpu().numpy()
     if isinstance(masks, torch.Tensor):
         masks = masks.cpu().numpy().astype(int)
     if isinstance(kpts, torch.Tensor):
@@ -829,6 +837,21 @@ def plot_images(
                                 im[y : y + h, x : x + w, :][mask] * 0.4 + np.array(color) * 0.6
                             )
                 annotator.fromarray(im)
+
+            # Plot points
+            if len(point):
+                point_ = point[idx].copy()
+                if len(point_):
+                    if point_.max() <= 1.01:  # if normalized with tolerance .01
+                        point_ *= w  # scale to pixels
+                    elif scale < 1:  # absolute coords need scale if image scales
+                        point_ *= scale
+                point_ += [x, y]
+                for j in range(len(point_)):
+                    if labels or conf[j] > 0.25:
+                        annotator.point(point_[j])
+
+    # Save and/or plot
     if not save:
         return np.asarray(annotator.im)
     annotator.im.save(fname)  # save

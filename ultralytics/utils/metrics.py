@@ -547,6 +547,25 @@ def L2_norm(point1, point2, axis=-1):
     """
     return np.linalg.norm(point1 - point2, axis=axis)
 
+# caculate the counting of MAE and MSE
+def couting_mae_mse(tp, target_cls):
+    """
+    Compute the mean absolute error (MAE) and mean squared error (MSE) of count task.
+
+    Args:
+        tp (np.ndarray): The true positive counts.
+        target_cls (np.ndarray): The target cls which can caculate the target counts.
+
+    Returns:
+        (np.ndarray): Mean absolute error.
+        (np.ndarray): Mean squared error.
+    """
+    pred_cnt = np.sum(tp, axis=1)
+    target_cnt = target_cls.shape[0]
+    mae, mse = maeAmse(pred_cnt, target_cnt)
+
+    return np.array([mae]), np.array([mse])
+
 def maeAmse(pred, target, weight=None):
     """
     Compute the mean absolute error (MAE) and mean squared error (MSE) given the predicted and target values.
@@ -557,15 +576,12 @@ def maeAmse(pred, target, weight=None):
         weight (np.ndarray, optional): An array of weights for each sample. Defaults to None.
 
     Returns:
-        (float): Mean absolute error.
-        (float): Mean squared error.
+        (np.ndarray): Mean absolute error.
+        (np.ndarray): Mean squared error.
     """
-    diff = pred - target
     if weight is not None:
-        diff = diff * weight
-    mae = np.abs(diff).mean()
-    mse = (diff ** 2).mean()
-    return mae, mse
+        return np.average(np.abs(pred - target), weights=weight), np.average((pred - target) ** 2, weights=weight)
+    return np.mean(np.abs(pred - target)), np.mean((pred - target) ** 2)
 
 # P2PNet 计算tp, fp的函数
 def calculate_nAP(predictions, ground_truths, k, delta):
@@ -1391,6 +1407,91 @@ class OBBMetrics(SimpleClass):
         """Returns a list of curves for accessing specific metrics curves."""
         return []
 
+# count的基础metrics，继承metrics的基类
+class CountBaseMetrics(Metric):
+    def __init__(self) -> None:
+        super().__init__()
+        self.mae = []
+        self.mse = []
+    
+    def update(self, results):
+        (
+            self.mae,
+            self.mse,
+        ) = results[10:]
+        super().update(results[:10])
+
+    def mean_results(self):
+        return super().mean_results() + [np.mean(self.mae), np.mean(self.mse)]
+    
+    @property
+    def ap50(self):
+        """
+        Returns the Average Precision (AP) at an IoU threshold of 0.5 for all classes.
+
+        Returns:
+            (np.ndarray, list): Array of shape (nc,) with AP50 values per class, or an empty list if not available.
+        """
+        return self.all_ap[:, 2] if len(self.all_ap) else []
+
+    @property
+    def ap(self):
+        """
+        Returns the Average Precision (AP) at an IoU threshold of 0.5-0.95 for all classes.
+
+        Returns:
+            (np.ndarray, list): Array of shape (nc,) with AP50-95 values per class, or an empty list if not available.
+        """
+        return self.all_ap.mean(1) if len(self.all_ap) else []
+    
+    @property
+    def mf1(self):
+        return self.f1.mean() if len(self.f1) else 0.0
+    
+    
+    @property
+    def nap05(self):
+        """
+        Returns the Density Normalized Average Precision (nAP) at an delta threshold of 0.05.
+
+        Returns:
+            (float): The mAP at an delta threshold of 0.05.
+        """
+        return self.all_ap[:, 0].mean() if len(self.all_ap) else 0.0
+    
+    @property
+    def nap25(self):
+        """
+        Returns the Density Normalized Average Precision (nAP) at an delta threshold of 0.25.
+
+        Returns:
+            (float): The mAP at an delta threshold of 0.25.
+        """
+        return self.all_ap[:, 1].mean() if len(self.all_ap) else 0.0
+    
+    @property
+    def nap50(self):
+        """
+        Returns the Density Normalized Average Precision (nAP) at an delta threshold of 0.5.
+
+        Returns:
+            (float): The mAP at an delta threshold of 0.5.
+        """
+        return self.all_ap[:, 2].mean() if len(self.all_ap) else 0.0
+
+    @property
+    def nap(self):
+        """
+        Returns the Density Normalized Average Precision (nAP) at an delta threshold of 0.05, 0.25, 0.5.
+
+        Returns:
+            (float): The mAP at an delta threshold of of 0.05, 0.25, 0.5.
+        """
+        return self.all_ap.mean() if len(self.all_ap) else 0.0
+    
+    def mean_results(self):
+        """Mean of results, return mf1, mp, mr, nap05, nap25, nap50, nap."""
+        return [self.mf1, self.mp, self.mr, self.nap05, self.nap25, self.nap50, self.nap]
 
 class CountMetrics(SimpleClass):
     def __init__(self, save_dir=Path("."), plot=False, on_plot=None, names=(), threshold=0.5) -> None:
@@ -1399,7 +1500,7 @@ class CountMetrics(SimpleClass):
         self.on_plot = on_plot
         self.names = names
         self.threshold = threshold
-        self.box = Metric()
+        self.box = CountBaseMetrics()
         self.speed = {"preprocess": 0.0, "inference": 0.0, "loss": 0.0, "postprocess": 0.0}
 
     def process(self, tp, conf, pred_cls, target_cls):
@@ -1415,28 +1516,25 @@ class CountMetrics(SimpleClass):
             names=self.names,
             on_plot=self.on_plot,
         )[2:]
+        # TODO 这里我没有按 照论文的判断threshold方法计算mae和mse，而是通过tp的数量计算的
+        mae, mse = couting_mae_mse(tp, target_cls)
+        # 合并mae和mse到results中
+        results += (mae, mse)
         self.box.nc = len(self.names)
         self.box.update(results)
 
     @property
     def keys(self):
-        # TODO 选择合适的评价指标
         """Returns a list of keys for accessing specific metrics."""
-        return ["metrics/precision(B)", "metrics/recall(B)", "metrics/mAP50(B)", "metrics/mAP50-95(B)"]
+        return ["metrics/F1-Measure(B)", "metrics/precision(B)", "metrics/recall(B)", "metrics/nAP05(B)", "metrics/nAP25(B)", "metrics/nAP50(B)", "metrics/mAP05-50(B)"]
 
     def mean_results(self):
-        """Calculate mean of detected objects & return precision, recall, mAP50, and mAP50-95."""
+        """Calculate mean of detected objects & return F1-Measure, precision, recall, nAP05, nAP25, nAP50, and nAP05-50."""
         return self.box.mean_results()
 
     def class_result(self, i):
         """Return the result of evaluating the performance of an object detection model on a specific class."""
         return self.box.class_result(i)
-    
-    def update(self, results):
-        (
-            self.MAE,
-            self.MSE,
-        ) = results
 
     @property
     def maps(self):

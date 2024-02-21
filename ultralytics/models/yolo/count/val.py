@@ -35,8 +35,11 @@ class CountValidator(DetectionValidator):
     def init_metrics(self, model):
         """Initiate counting metrics for YOLO model."""
         super().init_metrics(model)
-        self.stats = dict(tp=[], conf=[], pred_cls=[], target_cls=[])
-
+    
+    def get_desc(self):
+        """Return a formatted string summarizing class metrics of YOLO model."""
+        return ("%22s" + "%11s" * 9) % ("Class", "Images", "Instances", "Point(F1", "P", "R", "nAP05", "nAP25", "nAP50", "nAP05-50)")
+    
     def preprocess(self, batch):
         """Preprocesses the batch by converting the 'count' data into a float and moving it to the device."""
         batch = super().preprocess(batch)
@@ -44,13 +47,30 @@ class CountValidator(DetectionValidator):
         return batch
 
     def postprocess(self, preds):
-        """Apply Nothing to prediction outputs."""
+        """Apply to prediction outputs."""
         preds['pred_logits'] = torch.nn.functional.softmax(preds['pred_logits'], -1)
         preds = self._concat_pred(preds)
         # 创建一个张量，predn[:, 3]小于threshold的为1，大于threshold的为0，concat到preds的最后一维
         preds = torch.cat([preds, (preds[:, :, 3] > self.args.threshold).float().unsqueeze(-1)], dim=-1)
         return preds
-
+    
+    def _process_batch(self, predn, point):
+        """Return correct prediction matrix."""
+        return self.match_predictions(predn, point, delta=self.args.delta, k=self.args.knn)
+    
+    def _concat_pred(self, preds):
+        """Concatenate the prediction outputs."""
+        return torch.cat([preds['pred_points'], preds['pred_logits']], dim=2)
+    
+    def _process_count_metrics(self, predn, label):
+        """Process counting metrics MAE MSE."""
+        gt_cnt = label.shape[0]
+        pred_cnt = int((predn[:, 3] > self.args.threshold).sum())  # threshold 0.5 is used by default
+        # accumulate MAE, MSE
+        mae = abs(pred_cnt - gt_cnt)
+        mse = (pred_cnt - gt_cnt) * (pred_cnt - gt_cnt)
+        return mae, mse
+    
     def _prepare_batch(self, si, batch):
         """Prepares a batch of images and annotations for validation."""
         idx = batch["batch_idx"] == si
@@ -77,23 +97,6 @@ class CountValidator(DetectionValidator):
             pbatch["imgsz"], predn[:, :2], pbatch["ori_shape"], ratio_pad=pbatch["ratio_pad"]
         )  # native-space pred
         return predn
-    
-    def _process_batch(self, predn, point, cls):
-        """Return correct prediction matrix."""
-        return self.match_predictions(predn[:, :4], point, delta=self.args.delta, k=self.args.knn)
-    
-    def _concat_pred(self, preds):
-        """Concatenate the prediction outputs."""
-        return torch.cat([preds['pred_points'], preds['pred_logits']], dim=2)
-    
-    def _process_count_metrics(self, predn, label):
-        """Process counting metrics MAE MSE."""
-        gt_cnt = label.shape[0]
-        pred_cnt = int((predn[:, 3] > self.args.threshold).sum())  # threshold 0.5 is used by default
-        # accumulate MAE, MSE
-        mae = abs(pred_cnt - gt_cnt)
-        mse = (pred_cnt - gt_cnt) * (pred_cnt - gt_cnt)
-        return mae, mse
 
     def update_metrics(self, preds, batch):
         """Metrics."""
@@ -117,14 +120,14 @@ class CountValidator(DetectionValidator):
 
             # Predictions
             if self.args.single_cls:
-                pred[:, 5] = 0
+                pred[:, 4] = 0
             predn = self._prepare_pred(pred, pbatch)
             stat["conf"] = predn[:, 3]
             stat["pred_cls"] = predn[:, 4]
 
             # Evaluate
             if nl:
-                stat["tp"] = self._process_batch(predn, point, cls)
+                stat["tp"] = self._process_batch(predn, point)
                 # stat["tp"] = self._process_batch(predn, bbox, cls)
             for k in self.stats.keys():
                 self.stats[k].append(stat[k])
@@ -136,7 +139,7 @@ class CountValidator(DetectionValidator):
                 file = self.save_dir / "labels" / f'{Path(batch["im_file"][si]).stem}.txt'
                 self.save_one_txt(predn, self.args.save_conf, pbatch["ori_shape"], file)
     
-    def match_predictions(self, predictions, ground_truths, delta=[0.5], k=3):
+    def match_predictions(self, predn, gt_point, delta=[0.5], k=3):
         """ 
         Match predictions with ground truth points and calculate the Average Precision (AP) for each class.
 
@@ -148,47 +151,45 @@ class CountValidator(DetectionValidator):
 
         Returns:
             AP (float): Average Precision
-        """        
+        """      
+        predn_point = predn[:, :2]
+        conf = predn[:, 3]  
+        # 保证gt_point的shape为(k, 2)，如果gt_point的数量小于k，则用0填充
+        gt_point = gt_point if gt_point.shape[0] >= k else torch.cat([gt_point, torch.zeros(k - gt_point.shape[0], 2, device=self.device)])                                                                 
         # Sort predictions by confidence score from high to low,
-        predictions = predictions[torch.argsort(predictions[:, 3], descending=True)]
+        _, idx = torch.sort(conf, descending=True)
+        predn_point = predn_point[idx]
 
         # Initialize binary array for TP and FP, N * len(delta)
-        binary = torch.zeros(len(predictions), len(delta), dtype=torch.bool, device=self.device)
-        # build a list of ground truth points
-        ground_truths = [{'point': gt, 'matched': False} for gt in ground_truths]
+        binary = torch.zeros(len(predn_point), len(delta), dtype=torch.bool, device=self.device)
+       
+        # 计算预测点和真实点之间的所有成对距离
+        distances = torch.cdist(predn_point, gt_point)
+
+        # 初始化未匹配的点的掩码
+        unmatched_mask = torch.ones(distances.shape[1], dtype=torch.bool, device=self.device)
+
+        # 找到具有最小标准化距离的未匹配的真实点
+        min_distances, min_indices = torch.min(distances, dim=1)
 
         # For each predicted point
-        for i, pred in enumerate(predictions):
-            # Find the ground truth point that has not been matched before and has the smallest Euclidean distance
-            min_distance = float('inf')
-            matched_gt = None
-            for j, gt in enumerate(ground_truths):
-                if gt['matched']:
+        for j, d in enumerate(delta):
+            for n, p in enumerate(predn_point):
+                if torch.sum(unmatched_mask) == 0:
+                    break
+                if not unmatched_mask[min_indices[n]]:
                     continue
-                distance = np.linalg.norm(np.array(pred[:2]) - np.array(gt["point"]))
-                if distance < min_distance:
-                    min_distance = distance
-                    matched_gt = gt
-
-            # If the matched ground truth point exists
-            if matched_gt is not None:
                 # Calculate the average distance to the k nearest neighbors of the ground truth point
-                distances = [np.linalg.norm(np.array(gt["point"]) - np.array(matched_gt["point"])) for gt in ground_truths]
-                distances.sort()
-                dkNN = np.mean(distances[:k])
+                distances_gt = torch.linalg.norm(gt_point - gt_point[min_indices[n]].unsqueeze(0), dim=1)
+                kNN_distances = torch.topk(distances_gt, k, dim=0, largest=False).values
+                dkNN = torch.mean(kNN_distances)
 
                 # If the normalized distance is less than delta, the prediction is a TP
-                for j, d in enumerate(delta):
-                    if min_distance / dkNN < d:
-                        binary[i][j] = True
-                        matched_gt['matched'] = True
-                    else:  # Otherwise, the prediction is a FP
-                        binary[i][j] = False
-            else:  # If no ground truth point can be matched, the prediction is a FP
-                binary[i] = False
+                if min_distances[n] / dkNN < d:
+                    binary[n][j] = True
+                    unmatched_mask[min_indices[n]] = False
 
         return binary
-
 
     def plot_predictions(self, batch, preds, ni):
         """Plots predicted bounding boxes on input images and saves the result."""
@@ -210,14 +211,28 @@ class CountValidator(DetectionValidator):
             stats["target_cls"].astype(int), minlength=self.nc
         )  # number of targets per class
         return self.metrics.results_dict
+    
+    def plot_val_samples(self, batch, ni):
+        """Plot validation image samples."""
+        plot_images(
+            batch["img"],
+            batch["batch_idx"],
+            batch["cls"].squeeze(-1),
+            batch["bboxes"],
+            point=batch["point"],
+            paths=batch["im_file"],
+            fname=self.save_dir / f"val_batch{ni}_labels.jpg",
+            names=self.names,
+            on_plot=self.on_plot,
+        )
 
     def pred_to_json(self, predn, filename):
         """Serialize YOLO predictions to COCO json format."""
         stem = Path(filename).stem
         image_id = int(stem) if stem.isnumeric() else stem
-        rbox = torch.cat([predn[:, :4], predn[:, -1:]], dim=-1)
-        poly = ops.xywhr2xyxyxyxy(rbox).view(-1, 8)
-        for i, (r, b) in enumerate(zip(rbox.tolist(), poly.tolist())):
+        rpoint = torch.cat([predn[:, :2], predn[:, -1:]], dim=-1)
+        poly = rpoint
+        for i, (r, b) in enumerate(zip(rpoint.tolist(), poly.tolist())):
             self.jdict.append(
                 {
                     "image_id": image_id,
