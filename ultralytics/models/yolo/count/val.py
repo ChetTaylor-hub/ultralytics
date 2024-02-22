@@ -42,7 +42,7 @@ class CountValidator(DetectionValidator):
     
     def get_desc(self):
         """Return a formatted string summarizing class metrics of YOLO model."""
-        return ("%22s" + "%11s" * 9) % ("Class", "Images", "Instances", "Point(MAE, MSE, F1", "P", "R", "nAP05", "nAP25", "nAP50", "nAP05-50)")
+        return ("%22s" + "%11s" * 11) % ("Class", "Images", "Instances", "Point(MAE", "MSE", "F1", "P", "R", "nAP05", "nAP25", "nAP50", "nAP05-50)")
     
     def preprocess(self, batch):
         """Preprocesses the batch by converting the 'count' data into a float and moving it to the device."""
@@ -93,10 +93,8 @@ class CountValidator(DetectionValidator):
         label = batch["label"][idx].squeeze(-1)
         point = batch["point"][idx]
         if len(cls):
-            bboxes = ops.xywh2xyxy(bboxes) * torch.tensor(imgsz, device=self.device)[[1, 0, 1, 0]]  # target boxes
-            ops.scale_boxes(imgsz, bboxes, ori_shape, ratio_pad=ratio_pad)  # native-space labels
-            point[:, 0] = (bboxes[:, 0] + bboxes[:, 2]) / 2
-            point[:, 1] = (bboxes[:, 1] + bboxes[:, 3]) / 2
+            point = point * torch.tensor(imgsz, device=self.device)[[1, 0]]  # target point
+            ops.scale_point(imgsz, point, ori_shape, ratio_pad=ratio_pad)  # native-space labels
         return dict(cls=cls, label=label, point=point, ori_shape=ori_shape, imgsz=imgsz, ratio_pad=ratio_pad)
     
     def _prepare_pred(self, pred, pbatch):

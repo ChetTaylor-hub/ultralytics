@@ -548,7 +548,7 @@ def L2_norm(point1, point2, axis=-1):
     return np.linalg.norm(point1 - point2, axis=axis)
 
 # caculate the counting of MAE and MSE
-def couting_mae_mse(tp, target_cls):
+def couting_mae_mse(conf, target_cls, threshold=0.5):
     """
     Compute the mean absolute error (MAE) and mean squared error (MSE) of count task.
 
@@ -560,7 +560,7 @@ def couting_mae_mse(tp, target_cls):
         (np.ndarray): Mean absolute error.
         (np.ndarray): Mean squared error.
     """
-    pred_cnt = np.sum(tp, axis=1)
+    pred_cnt = sum(conf > threshold).sum()
     target_cnt = target_cls.shape[0]
     mae, mse = maeAmse(pred_cnt, target_cnt)
 
@@ -582,52 +582,7 @@ def maeAmse(pred, target, weight=None):
     if weight is not None:
         return np.average(np.abs(pred - target), weights=weight), np.average((pred - target) ** 2, weights=weight)
     return np.mean(np.abs(pred - target)), np.mean((pred - target) ** 2)
-
-# P2PNet 计算tp, fp的函数
-def calculate_nAP(predictions, ground_truths, k, delta):
-    # Sort predictions by confidence score from high to low
-    predictions = sorted(predictions, key=lambda x: x[1], reverse=True)
-
-    # Initialize binary list for TP and FP
-    binary_list = []
-
-    # For each predicted point
-    for p in predictions:
-        # Find the ground truth point that has not been matched before and has the smallest Euclidean distance
-        min_distance = float('inf')
-        matched_gt = None
-        for gt in ground_truths:
-            if 'matched' in gt and gt['matched']:
-                continue
-            distance = np.linalg.norm(np.array(p[0]) - np.array(gt['point']))
-            if distance < min_distance:
-                min_distance = distance
-                matched_gt = gt
-
-        # If the matched ground truth point exists
-        if matched_gt is not None:
-            # Calculate the average distance to the k nearest neighbors of the ground truth point
-            distances = [np.linalg.norm(np.array(gt['point']) - np.array(matched_gt['point'])) for gt in ground_truths]
-            distances.sort()
-            dkNN = np.mean(distances[:k])
-
-            # If the normalized distance is less than delta, the prediction is a TP
-            if min_distance / dkNN < delta:
-                binary_list.append(1)
-                matched_gt['matched'] = True
-            else:  # Otherwise, the prediction is a FP
-                binary_list.append(0)
-        else:  # If no ground truth point can be matched, the prediction is a FP
-            binary_list.append(0)
-
-    # Calculate the Average Precision (AP)
-    AP = np.mean(binary_list)
-
-    return AP
     
-    
-
-
 def nAP(recall, precision, n=101):
     """
     Compute the normalized average precision (nAP) given the recall and precision curves.
@@ -1524,7 +1479,7 @@ class CountMetrics(SimpleClass):
             on_plot=self.on_plot,
         )[2:]
         # TODO 这里我没有按 照论文的判断threshold方法计算mae和mse，而是通过tp的数量计算的
-        mae, mse = couting_mae_mse(tp, target_cls)
+        mae, mse = couting_mae_mse(conf, target_cls)
         # 合并mae和mse到results中
         results += (mae, mse)
         self.box.nc = len(self.names)
