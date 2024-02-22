@@ -1447,8 +1447,15 @@ class CountBaseMetrics(Metric):
     @property
     def mf1(self):
         return self.f1.mean() if len(self.f1) else 0.0
-    
-    
+
+    @property
+    def mmae(self):
+        return self.mae.mean() if len(self.mae) else 0.0
+
+    @property 
+    def mmse(self):
+        return self.mse.mean() if len(self.mse) else 0.0
+
     @property
     def nap05(self):
         """
@@ -1491,7 +1498,7 @@ class CountBaseMetrics(Metric):
     
     def mean_results(self):
         """Mean of results, return mf1, mp, mr, nap05, nap25, nap50, nap."""
-        return [self.mf1, self.mp, self.mr, self.nap05, self.nap25, self.nap50, self.nap]
+        return [self.mae, self.mse, self.mf1, self.mp, self.mr, self.nap05, self.nap25, self.nap50, self.nap]
 
 class CountMetrics(SimpleClass):
     def __init__(self, save_dir=Path("."), plot=False, on_plot=None, names=(), threshold=0.5) -> None:
@@ -1526,10 +1533,10 @@ class CountMetrics(SimpleClass):
     @property
     def keys(self):
         """Returns a list of keys for accessing specific metrics."""
-        return ["metrics/F1-Measure(B)", "metrics/precision(B)", "metrics/recall(B)", "metrics/nAP05(B)", "metrics/nAP25(B)", "metrics/nAP50(B)", "metrics/mAP05-50(B)"]
+        return ["metrics/MAE(B)", "metrics/MSE(B)", "metrics/F1-Measure(B)", "metrics/precision(B)", "metrics/recall(B)", "metrics/nAP05(B)", "metrics/nAP25(B)", "metrics/nAP50(B)", "metrics/mAP05-50(B)"]
 
     def mean_results(self):
-        """Calculate mean of detected objects & return F1-Measure, precision, recall, nAP05, nAP25, nAP50, and nAP05-50."""
+        """Calculate mean of detected objects & return MAE, MSE, F1-Measure, precision, recall, nAP05, nAP25, nAP50, and nAP05-50."""
         return self.box.mean_results()
 
     def class_result(self, i):

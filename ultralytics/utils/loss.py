@@ -7,7 +7,7 @@ import torch.distributed as dist
 from scipy.optimize import linear_sum_assignment
 
 from ultralytics.utils.metrics import OKS_SIGMA
-from ultralytics.utils.ops import crop_mask, xywh2xyxy, xyxy2xywh
+from ultralytics.utils.ops import crop_mask, xywh2xyxy, xyxy2xywh, _get_tgt_permutation_idx, _get_src_permutation_idx
 from ultralytics.utils.tal import RotatedTaskAlignedAssigner, TaskAlignedAssigner, dist2bbox, dist2rbox, make_anchors
 from .metrics import bbox_iou, probiou
 from .tal import bbox2dist
@@ -745,10 +745,10 @@ class CountingLoss(nn.Module):
 
         self.num_classes = m.nc - 1
         self.matcher = HungarianMatcher_Crowd(cost_class=1.0, cost_point=0.05)
-        self.weight_dict = {'loss_labels': 1, 'loss_points': 0.0002}
-        self.eos_coef = 0.5
+        self.weight_dict = {'loss_labels': torch.tensor(1, device=device), 'loss_points': torch.tensor(0.0002, device=device)}
+        self.eos_coef = torch.tensor(0.5, device=device)
         self.losses = ['labels', 'points']
-        empty_weight = torch.ones(self.num_classes + 1)
+        empty_weight = torch.ones(self.num_classes + 1, device=device)
         empty_weight[0] = self.eos_coef
         self.empty_weight = empty_weight
         # self.register_buffer('empty_weight', empty_weight)
@@ -772,38 +772,26 @@ class CountingLoss(nn.Module):
         assert 'pred_logits' in outputs
         src_logits = outputs['pred_logits']
 
-        idx = self._get_src_permutation_idx(indices)
+        idx = _get_src_permutation_idx(indices)
         target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
         target_classes = torch.full(src_logits.shape[:2], 0,
                                     dtype=torch.int64, device=self.device)
         target_classes[idx] = target_classes_o
 
-        loss_ce = F.cross_entropy(src_logits.transpose(1, 2), target_classes, self.empty_weight)
+        loss_ce = F.cross_entropy(src_logits.transpose(1, 2).float(), target_classes, self.empty_weight)
 
         return loss_ce
 
     def loss_points(self, outputs, targets, indices, num_points):
 
         assert 'pred_points' in outputs
-        idx = self._get_src_permutation_idx(indices)
+        idx = _get_src_permutation_idx(indices)
         src_points = outputs['pred_points'][idx]
         target_points = torch.cat([t['point'][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
         loss_points = F.mse_loss(src_points, target_points, reduction='none')
 
         return loss_points.sum() / num_points
-
-    def _get_src_permutation_idx(self, indices):
-        # permute predictions following indices
-        batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
-        src_idx = torch.cat([src for (src, _) in indices])
-        return batch_idx, src_idx
-
-    def _get_tgt_permutation_idx(self, indices):
-        # permute targets following indices
-        batch_idx = torch.cat([torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices)])
-        tgt_idx = torch.cat([tgt for (_, tgt) in indices])
-        return batch_idx, tgt_idx
 
     def get_loss(self, loss, outputs, targets, indices, num_points, **kwargs):
         loss_map = {
@@ -848,6 +836,7 @@ class CountingLoss(nn.Module):
         loss = torch.zeros(2, device=self.device)
         # 构建targets
         targets = self.build_targets(batch)
+        targets = [{k: v.to(self.device) for k, v in t.items()} for t in targets]
 
         feats = preds[1] if isinstance(preds, tuple) else preds
         preds["pred_logits"] = torch.cat([xi.view(xi.shape[0], -1, self.num_classes + 1) for xi in feats["pred_logits"]], 1)

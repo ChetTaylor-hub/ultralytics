@@ -157,7 +157,6 @@ def scale_point(img1_shape, point, img0_shape, ratio_pad=None, padding=True):
     point[..., :2] /= gain
     return clip_point(point, img0_shape)
 
-
 def make_divisible(x, divisor):
     """
     Returns the nearest number that is divisible by the given divisor.
@@ -893,3 +892,15 @@ def clean_str(s):
         (str): a string with special characters replaced by an underscore _
     """
     return re.sub(pattern="[|@#!¡·$€%&()=?¿^*;:,¨´><+]", repl="_", string=s)
+
+def _get_src_permutation_idx(indices):
+    # permute predictions following indices
+    batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
+    src_idx = torch.cat([src for (src, _) in indices])
+    return batch_idx, src_idx
+
+def _get_tgt_permutation_idx(indices):
+    # permute targets following indices
+    batch_idx = torch.cat([torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices)])
+    tgt_idx = torch.cat([tgt for (_, tgt) in indices])
+    return batch_idx, tgt_idx
