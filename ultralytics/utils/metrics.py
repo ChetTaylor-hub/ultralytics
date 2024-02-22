@@ -560,7 +560,7 @@ def couting_mae_mse(conf, target_cls, threshold=0.5):
         (np.ndarray): Mean absolute error.
         (np.ndarray): Mean squared error.
     """
-    pred_cnt = sum(conf > threshold).sum()
+    pred_cnt = (conf > threshold).sum()
     target_cnt = target_cls.shape[0]
     mae, mse = maeAmse(pred_cnt, target_cnt)
 

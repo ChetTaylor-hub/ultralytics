@@ -172,7 +172,7 @@ if __name__ == "__main__":
         # weight='',
         data='ultralytics/cfg/datasets/coco128.yaml',
         hyp='ultralytics/cfg/hyp/default.yaml',
-        device='0',
+        device='cpu',
         epochs=300,
         workers=4,
         batch=16,

@@ -729,29 +729,22 @@ class CountingLoss(nn.Module):
         h = model.args  # hyperparameters
 
         m = model.model[-1]  # Detect() module
-        # self.bce = nn.BCEWithLogitsLoss(reduction="none")
         self.hyp = h
-        # self.stride = m.stride  # model strides
-        # self.nc = m.nc  # number of classes
-        # self.no = m.no
-        # self.reg_max = m.reg_max
         self.device = device
-
-        # self.use_dfl = m.reg_max > 1
-
-        # self.assigner = TaskAlignedAssigner(topk=10, num_classes=self.nc, alpha=0.5, beta=6.0)
-        # self.bbox_loss = BboxLoss(m.reg_max - 1, use_dfl=self.use_dfl).to(device)
-        # self.proj = torch.arange(m.reg_max, dtype=torch.float, device=device)
-
         self.num_classes = m.nc - 1
         self.matcher = HungarianMatcher_Crowd(cost_class=1.0, cost_point=0.05)
+        
+        # for point loss gain
         self.weight_dict = {'loss_labels': torch.tensor(1, device=device), 'loss_points': torch.tensor(0.0002, device=device)}
-        self.eos_coef = torch.tensor(0.5, device=device)
+
+        # loss names
         self.losses = ['labels', 'points']
+
+        # for class cross_entropy loss gain
+        self.eos_coef = torch.tensor(0.5, device=device)
         empty_weight = torch.ones(self.num_classes + 1, device=device)
         empty_weight[0] = self.eos_coef
         self.empty_weight = empty_weight
-        # self.register_buffer('empty_weight', empty_weight)
 
     def is_dist_avail_and_initialized(self):
         if not dist.is_available():
@@ -778,7 +771,7 @@ class CountingLoss(nn.Module):
                                     dtype=torch.int64, device=self.device)
         target_classes[idx] = target_classes_o
 
-        loss_ce = F.cross_entropy(src_logits.transpose(1, 2).float(), target_classes, self.empty_weight)
+        loss_ce = F.cross_entropy(src_logits.transpose(1, 2), target_classes, self.empty_weight)
 
         return loss_ce
 
@@ -833,6 +826,7 @@ class CountingLoss(nn.Module):
              targets: list of dicts, such that len(targets) == batch_size.
                       The expected keys in each dpict depends on the losses applied, see each loss' doc
         """
+        batch_size = len(batch["batch_idx"])
         loss = torch.zeros(2, device=self.device)
         # 构建targets
         targets = self.build_targets(batch)
@@ -843,7 +837,7 @@ class CountingLoss(nn.Module):
         preds["pred_points"] = torch.cat([xi.view(xi.shape[0], -1, 2) for xi in feats["pred_points"]], 1)
 
 
-        indices1 = self.matcher(preds, targets)  # 通过一对一匹配得到索引
+        indices1 = self.matcher(preds, targets)  # 通过一对一匹配得到索引，论文的核心
 
         num_points = sum(len(t["labels"]) for t in targets)
         num_points = torch.as_tensor([num_points], dtype=torch.float, device=self.device)
@@ -857,7 +851,8 @@ class CountingLoss(nn.Module):
         loss[0] *= self.weight_dict["loss_labels"]  # labels gain
         loss[1] *= self.weight_dict["loss_points"]  # points gain
 
-        return loss.sum(), loss.detach()  # loss(label, point)
+        # TODO 原论文中 loss 没有乘以 batch_size
+        return loss.sum() * batch_size, loss.detach()  # loss(label, point)
 
 
 class HungarianMatcher_Crowd(nn.Module):
